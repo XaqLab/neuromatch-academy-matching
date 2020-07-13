@@ -8,7 +8,11 @@ Created on Sun Jul 12 22:45:42 2020
 import numpy as np
 from scipy.sparse import dok_matrix
 
-from .utils import slot_label
+from .utils import slot_label, preprocess
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import PCA
+from sklearn.metrics.pairwise import euclidean_distances
 
 
 class FlowGraph:
@@ -293,7 +297,6 @@ class PodMentorGraph(FlowGraph):
                     if assignments:
                         assigned_count += 1
                         usage_count += len(assignments)/m_capacity
-                        print('{:.2%}'.format(len(assignments)/m_capacity))
 
                         out_strs = []
                         for p_idx, d_idx, s_idx in assignments:
@@ -349,3 +352,45 @@ class PodMentorGraph(FlowGraph):
         print('{} mentors assigned with at least one pod, average usage {:.2%}'.format(
             assigned_count, usage_count/assigned_count
             ))
+
+
+def pod_mentor_affinity(pod_info, student_abstracts, mentor_info,
+                      n_components=30):
+    r"""Calculates affinity matrix between pod and mentor.
+
+    Student abstracts and mentor abstracts are embedded to a topic space. The
+    pod topic is the average of student topic it contains. Euclidean distance
+    between pod topic and mentor topic are thus used for affinity.
+
+    Args
+    ----
+    pod_info, student_abstracts, mentor_info: dict
+        Dictionaries loaded from files, check `.utils` for more details.
+
+    Returns
+    -------
+    affinity: (pod_num, mentor_num), array_like
+        The affinity matrix between all pods and all mentors.
+
+    """
+    s_strs = [preprocess(a) for a in student_abstracts['abstracts']]
+    m_strs = [preprocess(a) for a in mentor_info['abstracts']]
+
+    model = TfidfVectorizer(sublinear_tf=True)
+    X = model.fit_transform(s_strs+m_strs)
+
+    topic_model = PCA(n_components=n_components)
+    X_topic = topic_model.fit_transform(X.todense())
+
+    s_vecs = X_topic[:len(s_strs)]
+    m_vecs = X_topic[-len(m_strs):]
+
+    p_vecs = []
+    for p_idx in range(pod_info['pod_num']):
+        s_idxs = [student_abstracts['email'].index(e) for e in pod_info['student_emails'][p_idx] \
+                  if e in student_abstracts['email']]
+        p_vecs.append(s_vecs[s_idxs].mean(axis=0))
+    p_vecs = np.array(p_vecs)
+
+    pm_affinity = -euclidean_distances(p_vecs, m_vecs)
+    return pm_affinity
