@@ -184,6 +184,41 @@ def load_mentor_availability(mentor_xlsx):
     return mentor_availability
 
 
+def load_student_abstracts(student_csv):
+    r"""Loads student abstracts.
+
+    Args
+    ----
+    student_csv: str
+        The csv file renamed from ``Filtered view.csv``.
+
+    Returns
+    -------
+    student_abstracts: dict
+        A dictionary containing abstracts of all students.
+
+        `'student_num'`: int
+            The number of students.
+        `'email'`: list of str
+            The e-mail address of each student.
+        `'abstracts'`: list of str
+            The abstract of each student. Obviously invalid ones are replaced
+            with an empty str `''`.
+
+    """
+    df = pandas.read_csv(student_csv)
+    assert len(np.unique(df['id']))==len(df)
+    student_abstracts = {
+        'student_num': len(df),
+        'email': [val.lower() for val in df['id'].tolist()],
+        'abstracts': df['abstracts'].tolist(),
+        }
+    for i, a in enumerate(student_abstracts['abstracts']):
+        if not isinstance(a, str) or len(a)<100:
+            student_abstracts['abstracts'][i] = ''
+    return student_abstracts
+
+
 def slot_label(s_idx):
     r"""Returns slot label.
 
