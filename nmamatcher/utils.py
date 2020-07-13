@@ -29,6 +29,21 @@ for key_a in offsets:
     for key_b in hour_spans:
         GROUP_SLOTS[key_a+key_b] = (hour_spans[key_b]+offsets[key_a])
 
+POD_DSET_OPTIONS = {
+    'Single Unit': 'SingleUnit',
+    'FMRI': 'fMRI',
+    'EEG': 'EEG',
+    }
+MENTOR_DSET_OPTIONS = [
+    'EEG/ECoG/MEG/LFP', 'Spikes/Calcium', 'MRI/fMRI/BulkCalcium',
+    'Behavior(Choice)', 'Behavior(Motor/HighDim)'
+    ]
+DSET_AFFINITY = {
+    'SingleUnit': [0.8, 1., 0.6, 0.2, 0.4],
+    'fMRI': [0.8, 0.6, 1., 0.8, 0.2],
+    'EEG': [1., 0.6, 0.8, 0.8, 0.4],
+    }
+
 
 def load_pod_info(pod_csv):
     r"""Loads pod information.
@@ -56,6 +71,9 @@ def load_pod_info(pod_csv):
             `'timezone_label'`. Each element is a list of ints, containing
             indices ranging in :math:`[0, 48)` corresponding to the 48
             half-hour slots in UTC.
+        `'dset_option'`: list of str
+            The dataset option of each pod, reformatted through
+            ``POD_DSET_OPTIONS``.
         `'student_emails'`: list
             Each element is a list of e-mail addresses of students within this
             pod.
@@ -70,6 +88,7 @@ def load_pod_info(pod_csv):
         'pod_email': [],
         'timezone_label': [],
         'slots': [],
+        'dset_option': [],
         'student_emails': [],
         })
     for p_name in pod_info['name']:
@@ -77,6 +96,7 @@ def load_pod_info(pod_csv):
         pod_info['pod_email'].append(df['pod_email'][idxs[0]].lower())
         pod_info['timezone_label'].append(df['pod_slot'][idxs[0]])
         pod_info['slots'].append(GROUP_SLOTS[df['pod_slot'][idxs[0]]])
+        pod_info['dset_option'].append(POD_DSET_OPTIONS[df['pod_dataset'][idxs[0]]])
         pod_info['student_emails'].append([
             df['student_email'][idx].lower() for idx in idxs
             ])
@@ -123,22 +143,30 @@ def load_mentor_info(mentor_xlsx):
         `'secondary_slots'`: list
             The second choice of time slots of each mentor, with the same
             format as `'secondary_days'`.
+        `'abstracts'`: list of str
+            The abstract of each mentor, extracted from sheet ``'Confirmed
+            Mentors - Short Googl'``.
+        `'dset_option'`: list
+            The preferred dataset option to work with of each mentor. Each
+            element is a list containing values from ``MENTOR_DSET_OPTIONS``.
 
     """
+    def check_duplicate_email(df_series):
+        emails = [val.lower() for val in df_series]
+        if len(set(emails))!=len(emails):
+            for m_email, count in Counter(emails).items():
+                if count>1:
+                    print(f'{m_email} occurred {count} times')
+            raise RuntimeError('duplicate e-mails found')
+        return emails
+
     df = pandas.read_excel(mentor_xlsx, 'Project mentors - Final hours')
     mentor_info = {
-        'email':[val.lower() for val in df['Q33'].tolist()[2:]],
+        'email': check_duplicate_email(df['Q33'][2:]),
         'first_name': df['Q24'].tolist()[2:],
         'last_name': df['Q2'].tolist()[2:],
         'timezone': df['Q5'].tolist()[2:],
         }
-    has_duplicate = False
-    for m_email, count in Counter(mentor_info['email']).items():
-        if count>1:
-            print(f'{m_email} occurred {count} times')
-            has_duplicate = True
-    if has_duplicate:
-        print(f'duplicate e-mails found, please fix {mentor_xlsx}')
 
     mentor_info.update({
         'mentor_num': len(mentor_info['email']),
@@ -190,15 +218,28 @@ def load_mentor_info(mentor_xlsx):
 
     mentor_info['abstracts'] = []
     df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Short Googl')
-    emails_ = [val.lower() for val in df['Email Address']]
-    assert len(set(emails_))==len(emails_), 'duplicate e-mails found in abstracts sheet'
-    for m_idx, email in enumerate(mentor_info['email']):
-        if email in emails_:
+    emails = check_duplicate_email(df['Email Address'])
+    for m_email in mentor_info['email']:
+        if m_email in emails:
             mentor_info['abstracts'].append(
-                df[df.columns[11]][emails_.index(email)]
+                df[df.columns[11]][emails.index(m_email)]
                 )
         else:
             mentor_info['abstracts'].append('')
+
+    mentor_info['dset_option'] = []
+    df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Full Applic')
+    emails = check_duplicate_email(df['Q33'][2:])
+    keys = ['Q29_1', 'Q29_2', 'Q29_3', 'Q29_5', 'Q29_6']
+    for m_email in mentor_info['email']:
+        if m_email in emails:
+            idx = emails.index(m_email)+2
+            mentor_info['dset_option'].append([
+                label for label, key in zip(MENTOR_DSET_OPTIONS, keys) \
+                if isinstance(df[key][idx], str)
+             ])
+        else:
+            mentor_info['dset_option'].append([])
     return mentor_info
 
 
