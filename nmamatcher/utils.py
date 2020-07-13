@@ -9,6 +9,21 @@ import pandas
 import numpy as np
 from collections import Counter
 
+
+SLOT_NUM = 48
+
+PROJECT_HOURS = {} # NMA time zone groups in UTC
+offsets = {'1': 0, '2': 14, '3': 34}
+hour_spans = {
+    'A': np.arange(-8, 0),
+    'B': np.concatenate((np.arange(-4, 0), np.arange(14, 18))),
+    'C': np.arange(14, 22),
+    }
+for key_a in offsets:
+    for key_b in hour_spans:
+        PROJECT_HOURS[key_a+key_b] = (hour_spans[key_b]+offsets[key_a])%SLOT_NUM
+
+
 def load_mentor_hours(mentor_xlsx):
     r"""Loads mentor hour availability.
 
@@ -53,7 +68,7 @@ def load_mentor_hours(mentor_xlsx):
     """
     df = pandas.read_excel(mentor_xlsx, 'Project mentors - Final hours')
     mentor_hours = {
-        'email': df['Q33'].tolist()[2:],
+        'email':[val.lower() for val in df['Q33'].tolist()[2:]],
         'first_name': df['Q24'].tolist()[2:],
         'last_name': df['Q2'].tolist()[2:],
         'timezone': df['Q5'].tolist()[2:],
