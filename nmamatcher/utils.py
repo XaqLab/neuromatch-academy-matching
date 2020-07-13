@@ -9,6 +9,12 @@ import pandas
 import numpy as np
 from collections import Counter
 
+import re
+import string
+from unidecode import unidecode
+from nltk.stem.porter import PorterStemmer
+from nltk.tokenize import WhitespaceTokenizer
+
 
 SLOT_NUM = 48
 
@@ -181,6 +187,18 @@ def load_mentor_availability(mentor_xlsx):
         mentor_availability['secondary_slots'].append(
             [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][i])
             )
+
+    mentor_availability['abstracts'] = []
+    df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Short Googl')
+    emails_ = [val.lower() for val in df['Email Address']]
+    assert len(set(emails_))==len(emails_), 'duplicate e-mails found in abstracts sheet'
+    for m_idx, email in enumerate(mentor_availability['email']):
+        if email in emails_:
+            mentor_availability['abstracts'].append(
+                df[df.columns[11]][emails_.index(email)]
+                )
+        else:
+            mentor_availability['abstracts'].append('')
     return mentor_availability
 
 
@@ -254,3 +272,33 @@ def slot_label(s_idx):
         hour_label(s_idx), hour_label(s_idx+1)
         )+s_label
     return s_label
+
+
+stemmer = PorterStemmer()
+w_tokenizer = WhitespaceTokenizer()
+punct_re = re.compile('[{}]'.format(re.escape(string.punctuation)))
+
+def preprocess(text, stemming=True):
+    r"""Applies Snowball stemmer to string.
+
+    Adapted from `<https://github.com/titipata/paper-reviewer-matcher>`_.
+
+    Args
+    ----
+    text : str
+        Input abstract.
+    stemming : bool
+        Porter stemmer is applied if ``True``.
+    """
+
+    if isinstance(text, (type(None), float)):
+        text_preprocess = ''
+    else:
+        text = unidecode(text).lower()
+        text = punct_re.sub(' ', text) # remove punctuation
+        if stemming:
+            text_preprocess = [stemmer.stem(token) for token in w_tokenizer.tokenize(text)]
+        else:
+            text_preprocess = w_tokenizer.tokenize(text)
+        text_preprocess = ' '.join(text_preprocess)
+    return text_preprocess
