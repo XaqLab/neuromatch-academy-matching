@@ -179,7 +179,7 @@ def load_mentor_availability(mentor_xlsx):
                 )
             ])
         mentor_availability['secondary_slots'].append(
-            [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][2])
+            [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][i])
             )
     return mentor_availability
 
