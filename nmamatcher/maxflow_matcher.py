@@ -152,17 +152,17 @@ class PodMentorGraph(FlowGraph):
         Secondary choices from mentors are enabled. Currently, no choice
         preference is implemented, so that second choices are equivalent to
         first choices if enabled.
-    topic_alignment: (pod_num, mentor_num), array_like
+    affinity: (pod_num, mentor_num), array_like
         The content topic alignment matrix between pods and mentors.
 
     """
     def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
-                 d_idxs=[2, 3], use_second=False, topic_alignment=None):
+                 d_idxs=[2, 3], use_second=False, affinity=None):
         self.pod_info = pod_info
         self.mentor_info = mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
-        if topic_alignment is None:
-            topic_alignment = np.ones((pod_num, mentor_num))
+        if affinity is None:
+            affinity = -np.ones((pod_num, mentor_num))
 
         # gather available slots
         mentor_slots = []
@@ -206,16 +206,16 @@ class PodMentorGraph(FlowGraph):
                     if s_idx in pod_info['slots'][p_idx]%48: # assuming each pod is available for all week
                         u = vertices.index(('pod', p_idx))
                         v = vertices.index(('mentor', m_idx, d_idx, s_idx))
-                        cost[u, v] = -topic_alignment[p_idx, m_idx]
-                        cost[v, u] = topic_alignment[p_idx, m_idx]
+                        cost[u, v] = -int(100*affinity[p_idx, m_idx])
+                        cost[v, u] = -cost[u, v]
                         capacity[u, v] = 1
         # mentor-day-slot --> mentor-day
         for m_idx in range(mentor_num):
             for d_idx, s_idx, f in mentor_slots[m_idx]:
                 u = vertices.index(('mentor', m_idx, d_idx, s_idx))
                 v = vertices.index(('mentor', m_idx, d_idx))
-                cost[u, v] = -f
-                cost[v, u] = f
+                cost[u, v] = -int(10*f)
+                cost[v, u] = -cost[u, v]
                 capacity[u, v] = 1
         # mentor-day-->mentor
         for m_idx in range(mentor_num):
