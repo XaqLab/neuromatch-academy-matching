@@ -9,6 +9,7 @@ import numpy as np
 from scipy.sparse import dok_matrix
 
 from .utils import slot_label, preprocess
+from .utils import MENTOR_DSET_OPTIONS, DSET_AFFINITY
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import PCA
@@ -357,9 +358,10 @@ class PodMentorGraph(FlowGraph):
             ))
 
 
-def pod_mentor_affinity(pod_info, student_abstracts, mentor_info,
-                      n_components=30):
-    r"""Calculates affinity matrix between pod and mentor.
+def pod_mentor_topic_affinity(pod_info, mentor_info, student_abstracts,
+                              n_components=30):
+    r"""Calculates affinity matrix between pod and mentor based on abstract
+    topic.
 
     Student abstracts and mentor abstracts are embedded to a topic space. The
     pod topic is the average of student topic it contains. Euclidean distance
@@ -367,7 +369,7 @@ def pod_mentor_affinity(pod_info, student_abstracts, mentor_info,
 
     Args
     ----
-    pod_info, student_abstracts, mentor_info: dict
+    pod_info, mentor_info, student_abstracts: dict
         Dictionaries loaded from files, check `.utils` for more details.
 
     Returns
@@ -396,4 +398,36 @@ def pod_mentor_affinity(pod_info, student_abstracts, mentor_info,
     p_vecs = np.array(p_vecs)
 
     pm_affinity = -cosine_distances(p_vecs, m_vecs)
+    return pm_affinity
+
+
+def pod_mentor_dset_affinity(pod_info, mentor_info, base_score=1.):
+    r"""Calculates affinity matrix between pod and mentor based on dataset
+    option.
+
+    For each pod and mentor, a score is calculated based on the affinity of
+    pod dataset option and the preferred dataset options of the mentor.
+
+    Args
+    ----
+    pod_info, mentor_info: dict
+        Dictionaries loaded from files, check `.utils` for more details.
+    base_score: float
+        Base score for each pod-mentor pair. Mentors provide dataset options
+        can add corresponding affinity scores onto the base score.
+
+    Returns
+    -------
+    affinity: (pod_num, mentor_num), array_like
+        The affinity matrix between all pods and all mentors.
+
+    """
+    pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
+    pm_affinity = np.ones((pod_num, mentor_num))*base_score
+
+    for p_idx in range(pod_num):
+        dset_affinity = DSET_AFFINITY[pod_info['dset_option'][p_idx]]
+        for m_idx in range(mentor_num):
+            for dset_opt in mentor_info['dset_option'][m_idx]:
+                pm_affinity[p_idx, m_idx] += dset_affinity[MENTOR_DSET_OPTIONS.index(dset_opt)]
     return pm_affinity
