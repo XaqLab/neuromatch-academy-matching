@@ -13,6 +13,6 @@ if __name__=='__main__':
     mentor_info = load_mentor_info('mentors.info.xlsx')
     student_abstracts = load_student_abstracts('student.abstracts.csv')
 
-    affinity = pod_mentor_affinity(pod_info, student_abstracts, mentor_info)
+    affinity = pod_mentor_affinity(pod_info, student_abstracts, mentor_info) # stochastic
     pmg = PodMentorGraph(pod_info, mentor_info, affinity=affinity)
     pmg.export_mentor_schedule('mentor.schedule.csv')

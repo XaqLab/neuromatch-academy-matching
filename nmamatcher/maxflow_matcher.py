@@ -12,7 +12,7 @@ from .utils import slot_label, preprocess
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import PCA
-from sklearn.metrics.pairwise import euclidean_distances
+from sklearn.metrics.pairwise import cosine_distances
 
 
 class FlowGraph:
@@ -88,10 +88,12 @@ class FlowGraph:
         be found
 
         """
+        count = 0
         while True:
             parent = self.get_augmenting_path(True)
             if parent[self.vertices.index('sink')]<0:
                 # source is unconnected to sink on the residual flow graph
+                print(f'{count} augmentation performed\n')
                 break
             self.print_path(parent)
 
@@ -103,6 +105,7 @@ class FlowGraph:
                 delta_flow = min(delta_flow, self.residual[u, v])
                 v = u
             self.max_flow += delta_flow
+            count += 1
 
             # update residual
             v = self.vertices.index('sink')
@@ -392,5 +395,5 @@ def pod_mentor_affinity(pod_info, student_abstracts, mentor_info,
         p_vecs.append(s_vecs[s_idxs].mean(axis=0))
     p_vecs = np.array(p_vecs)
 
-    pm_affinity = -euclidean_distances(p_vecs, m_vecs)
+    pm_affinity = -cosine_distances(p_vecs, m_vecs)
     return pm_affinity
