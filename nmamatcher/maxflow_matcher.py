@@ -135,9 +135,9 @@ class PodMentorGraph(FlowGraph):
     pod_info: dict
         The dictionary containing information of all pods returned by
         `.utils.load_pod_info`.
-    mentor_availability: dict
+    mentor_info: dict
         The dictionary containing available time of all mentors returned by
-        `.utils.load_mentor_availability`.
+        `.utils.load_mentor_info`.
     max_pod_per_mentor: int
         The maximum number of pods assigned to a mentor.
     d_idxs: list of int
@@ -152,11 +152,11 @@ class PodMentorGraph(FlowGraph):
         The content topic alignment matrix between pods and mentors.
 
     """
-    def __init__(self, pod_info, mentor_availability, max_pod_per_mentor=2,
+    def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
                  d_idxs=[2, 3], use_second=False, topic_alignment=None):
         self.pod_info = pod_info
-        self.mentor_availability = mentor_availability
-        pod_num, mentor_num = pod_info['pod_num'], mentor_availability['mentor_num']
+        self.mentor_info = mentor_info
+        pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         if topic_alignment is None:
             topic_alignment = np.ones((pod_num, mentor_num))
 
@@ -165,15 +165,15 @@ class PodMentorGraph(FlowGraph):
         for m_idx in range(mentor_num):
             day_slots, day_slots_ = [], []
             for d_idx in d_idxs:
-                if d_idx in mentor_availability['primary_days'][m_idx]:
-                    for s_idx in mentor_availability['primary_slots'][m_idx]:
+                if d_idx in mentor_info['primary_days'][m_idx]:
+                    for s_idx in mentor_info['primary_slots'][m_idx]:
                         day_slots_.append((d_idx, s_idx))
                         day_slots.append((d_idx, s_idx, 1.))
-                if use_second and d_idx in mentor_availability['secondary_days'][m_idx]:
-                    for s_idx in mentor_availability['secondary_slots'][m_idx]:
+                if use_second and d_idx in mentor_info['secondary_days'][m_idx]:
+                    for s_idx in mentor_info['secondary_slots'][m_idx]:
                         if (d_idx, s_idx) not in day_slots_: # first choice has higher priority
                             day_slots_.append((d_idx, s_idx))
-                            day_slots.append((d_idx, s_idx, mentor_availability['flexibility'][m_idx]))
+                            day_slots.append((d_idx, s_idx, mentor_info['flexibility'][m_idx]))
             mentor_slots.append(day_slots)
 
         # define vertices in the graph
@@ -274,12 +274,12 @@ class PodMentorGraph(FlowGraph):
         available_count, assigned_count, usage_count = 0, 0, 0
         with open(out_csv, 'w') as f:
             f.write('name,email,day,slot (UNIVERSAL),mentor time zone,slot (LOCAL),pod,pod time zone group,zoom link\n')
-            for m_idx in range(self.mentor_availability['mentor_num']):
+            for m_idx in range(self.mentor_info['mentor_num']):
                 m_name = ' '.join([
-                    self.mentor_availability['first_name'][m_idx],
-                    self.mentor_availability['last_name'][m_idx]
+                    self.mentor_info['first_name'][m_idx],
+                    self.mentor_info['last_name'][m_idx]
                     ])
-                m_email = self.mentor_availability['email'][m_idx]
+                m_email = self.mentor_info['email'][m_idx]
 
                 m_capacity = self.capacity[:, self.vertices.index(('mentor', m_idx))].toarray().sum()
                 if m_capacity>0:
@@ -293,6 +293,7 @@ class PodMentorGraph(FlowGraph):
                     if assignments:
                         assigned_count += 1
                         usage_count += len(assignments)/m_capacity
+                        print('{:.2%}'.format(len(assignments)/m_capacity))
 
                         out_strs = []
                         for p_idx, d_idx, s_idx in assignments:
@@ -311,7 +312,7 @@ class PodMentorGraph(FlowGraph):
 
                             slot_universal = slot_label(s_idx)
 
-                            m_tz = self.mentor_availability['timezone'][m_idx]
+                            m_tz = self.mentor_info['timezone'][m_idx]
 
                             # convert to local time zone
                             s_idx -= 2
@@ -343,7 +344,7 @@ class PodMentorGraph(FlowGraph):
                         m_name, m_email, '', '', '', '', '', '', ''
                         ])+'\n')
         print('{}/{} mentors available'.format(
-            available_count, self.mentor_availability['mentor_num']
+            available_count, self.mentor_info['mentor_num']
             ))
         print('{} mentors assigned with at least one pod, average usage {:.2%}'.format(
             assigned_count, usage_count/assigned_count

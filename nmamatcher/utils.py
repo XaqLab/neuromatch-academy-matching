@@ -83,7 +83,7 @@ def load_pod_info(pod_csv):
     return pod_info
 
 
-def load_mentor_availability(mentor_xlsx):
+def load_mentor_info(mentor_xlsx):
     r"""Loads mentor hour availability.
 
     Time slots and the available weekdays are all in UTC.
@@ -95,7 +95,7 @@ def load_mentor_availability(mentor_xlsx):
 
     Returns
     -------
-    mentor_availability: dict
+    mentor_info: dict
         A dictionary containing available time of all mentors.
 
         `'mentor_num'`: int
@@ -126,22 +126,22 @@ def load_mentor_availability(mentor_xlsx):
 
     """
     df = pandas.read_excel(mentor_xlsx, 'Project mentors - Final hours')
-    mentor_availability = {
+    mentor_info = {
         'email':[val.lower() for val in df['Q33'].tolist()[2:]],
         'first_name': df['Q24'].tolist()[2:],
         'last_name': df['Q2'].tolist()[2:],
         'timezone': df['Q5'].tolist()[2:],
         }
     has_duplicate = False
-    for m_email, count in Counter(mentor_availability['email']).items():
+    for m_email, count in Counter(mentor_info['email']).items():
         if count>1:
             print(f'{m_email} occurred {count} times')
             has_duplicate = True
     if has_duplicate:
         print(f'duplicate e-mails found, please fix {mentor_xlsx}')
 
-    mentor_availability.update({
-        'mentor_num': len(mentor_availability['email']),
+    mentor_info.update({
+        'mentor_num': len(mentor_info['email']),
         'primary_days': [],
         'primary_slots': [],
         'flexibility': [],
@@ -164,12 +164,12 @@ def load_mentor_availability(mentor_xlsx):
         return list(range(slot_start, slot_end))
 
     for i in range(2, len(df)):
-        mentor_availability['primary_days'].append([
+        mentor_info['primary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q3_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
-        mentor_availability['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
+        mentor_info['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
 
         if df['Q42'][i]=='No':
             f_i = 0
@@ -177,29 +177,29 @@ def load_mentor_availability(mentor_xlsx):
             f_i = 0.9 # default preference for second choice
         else:
             f_i = df['Q47_1'][i]/10
-        mentor_availability['flexibility'].append(f_i)
+        mentor_info['flexibility'].append(f_i)
 
-        mentor_availability['secondary_days'].append([
+        mentor_info['secondary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q44_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
-        mentor_availability['secondary_slots'].append(
+        mentor_info['secondary_slots'].append(
             [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][i])
             )
 
-    mentor_availability['abstracts'] = []
+    mentor_info['abstracts'] = []
     df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Short Googl')
     emails_ = [val.lower() for val in df['Email Address']]
     assert len(set(emails_))==len(emails_), 'duplicate e-mails found in abstracts sheet'
-    for m_idx, email in enumerate(mentor_availability['email']):
+    for m_idx, email in enumerate(mentor_info['email']):
         if email in emails_:
-            mentor_availability['abstracts'].append(
+            mentor_info['abstracts'].append(
                 df[df.columns[11]][emails_.index(email)]
                 )
         else:
-            mentor_availability['abstracts'].append('')
-    return mentor_availability
+            mentor_info['abstracts'].append('')
+    return mentor_info
 
 
 def load_student_abstracts(student_csv):
