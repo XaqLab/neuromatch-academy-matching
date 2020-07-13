@@ -12,7 +12,7 @@ from collections import Counter
 
 SLOT_NUM = 48
 
-PROJECT_HOURS = {} # NMA time zone groups in UTC
+GROUP_SLOTS = {} # NMA time zone groups in UTC
 offsets = {'1': 0, '2': 14, '3': 34}
 hour_spans = {
     'A': np.arange(-8, 0),
@@ -21,7 +21,60 @@ hour_spans = {
     }
 for key_a in offsets:
     for key_b in hour_spans:
-        PROJECT_HOURS[key_a+key_b] = (hour_spans[key_b]+offsets[key_a])%SLOT_NUM
+        GROUP_SLOTS[key_a+key_b] = (hour_spans[key_b]+offsets[key_a])
+
+
+def load_pod_info(pod_csv):
+    r"""Loads pod information.
+
+    Args
+    ----
+    pod_csv: str
+        The csv file renamed from ``'pod_maps-Grid view.csv'``.
+
+    Returns
+    -------
+    pod_info: dict
+        A dictionary containing information of all pods.
+
+        `'pod_num'`: int
+            The number of pods.
+        `'name'`: list of str
+            The name of each pod.
+        `'pod_email'`: list of str
+            The e-mail address of each pod.
+        `'timezone_label'`: list of str
+            The time zone label of each pod, e.g. ``'1A'``, ``'3B'``.
+        `'slots'`: list
+            The time slots for project of each pod, determined by
+            `'timezone_label'`. Each element is a list of ints, containing
+            indices ranging in :math:`[0, 48)` corresponding to the 48
+            half-hour slots in UTC.
+        `'student_emails'`: list
+            Each element is a list of e-mail addresses of students within this
+            pod.
+
+    """
+    df = pandas.read_csv(pod_csv)
+    pod_names_ = np.array(df['pod_name'].tolist(), dtype=np.object)
+    pod_info = {'name': np.unique(pod_names_).tolist()}
+    pod_info['pod_num'] = len(pod_info['name'])
+
+    pod_info.update({
+        'pod_email': [],
+        'timezone_label': [],
+        'slots': [],
+        'student_emails': [],
+        })
+    for p_name in pod_info['name']:
+        idxs, = (pod_names_==p_name).nonzero()
+        pod_info['pod_email'].append(df['pod_email'][idxs[0]].lower())
+        pod_info['timezone_label'].append(df['pod_slot'][idxs[0]])
+        pod_info['slots'].append(GROUP_SLOTS[df['pod_slot'][idxs[0]]])
+        pod_info['student_emails'].append([
+            df['student_email'][idx].lower() for idx in idxs
+            ])
+    return pod_info
 
 
 def load_mentor_hours(mentor_xlsx):
@@ -42,11 +95,11 @@ def load_mentor_hours(mentor_xlsx):
         `'mentor_num'`: int
             The number of mentors.
         `'email'`: list of str
-            E-mail address of each mentor.
+            The e-mail address of each mentor.
         `'first_name'`, `'last_name'`: list of str
-            First name and last name of each mentor.
+            The first name and last name of each mentor.
         `'timezone'`: list of str
-            Local time zone of each mentor.
+            The local time zone of each mentor.
         `'primary_days'`: list
             The first choice of available days of each mentor. Each element is
             a list of ints, containing indices for the 15 weekdays over the 3
