@@ -77,7 +77,7 @@ def load_pod_info(pod_csv):
     return pod_info
 
 
-def load_mentor_hours(mentor_xlsx):
+def load_mentor_availability(mentor_xlsx):
     r"""Loads mentor hour availability.
 
     Time slots and the available weekdays are all in UTC.
@@ -89,7 +89,7 @@ def load_mentor_hours(mentor_xlsx):
 
     Returns
     -------
-    mentor_hours: dict
+    mentor_availability: dict
         A dictionary containing available time of all mentors.
 
         `'mentor_num'`: int
@@ -120,22 +120,22 @@ def load_mentor_hours(mentor_xlsx):
 
     """
     df = pandas.read_excel(mentor_xlsx, 'Project mentors - Final hours')
-    mentor_hours = {
+    mentor_availability = {
         'email':[val.lower() for val in df['Q33'].tolist()[2:]],
         'first_name': df['Q24'].tolist()[2:],
         'last_name': df['Q2'].tolist()[2:],
         'timezone': df['Q5'].tolist()[2:],
         }
     has_duplicate = False
-    for m_email, count in Counter(mentor_hours['email']).items():
+    for m_email, count in Counter(mentor_availability['email']).items():
         if count>1:
             print(f'{m_email} occurred {count} times')
             has_duplicate = True
     if has_duplicate:
-        raise RuntimeWarning(f'duplicate e-mails found, please fix {mentor_xlsx}')
+        print(f'duplicate e-mails found, please fix {mentor_xlsx}')
 
-    mentor_hours.update({
-        'mentor_num': len(mentor_hours['email']),
+    mentor_availability.update({
+        'mentor_num': len(mentor_availability['email']),
         'primary_days': [],
         'primary_slots': [],
         'flexibility': [],
@@ -158,21 +158,21 @@ def load_mentor_hours(mentor_xlsx):
         return list(range(slot_start, slot_end))
 
     for i in range(2, len(df)):
-        mentor_hours['primary_days'].append([
+        mentor_availability['primary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q3_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
-        mentor_hours['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
-        mentor_hours['flexibility'].append(
+        mentor_availability['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
+        mentor_availability['flexibility'].append(
             0 if np.isnan(df['Q47_1'][i]) else df['Q47_1'][i]/10
             )
-        mentor_hours['secondary_days'].append([
+        mentor_availability['secondary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q44_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
-        mentor_hours['secondary_slots'].append(
+        mentor_availability['secondary_slots'].append(
             [] if np.isnan(df['Q47_1'][i]) else get_slots(df['Q45'][i], df['Q46'][2])
             )
-    return mentor_hours
+    return mentor_availability
