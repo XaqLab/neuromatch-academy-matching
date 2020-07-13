@@ -144,7 +144,7 @@ def load_mentor_availability(mentor_xlsx):
         })
 
     def get_slots(start_time, duration_str):
-        slot_start = start_time.hour*2+2 # convert from UTC+0 to UTC+1
+        slot_start = start_time.hour*2
         if duration_str=='1/2 hour':
             slot_end = slot_start+1
         elif duration_str=='1 hour':
@@ -164,15 +164,21 @@ def load_mentor_availability(mentor_xlsx):
                 )
             ])
         mentor_availability['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
-        mentor_availability['flexibility'].append(
-            0 if np.isnan(df['Q47_1'][i]) else df['Q47_1'][i]/10
-            )
+
+        if df['Q42'][i]=='No':
+            f_i = 0
+        elif np.isnan(df['Q47_1'][i]):
+            f_i = 0.9 # default preference for second choice
+        else:
+            f_i = df['Q47_1'][i]/10
+        mentor_availability['flexibility'].append(f_i)
+
         mentor_availability['secondary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q44_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
         mentor_availability['secondary_slots'].append(
-            [] if np.isnan(df['Q47_1'][i]) else get_slots(df['Q45'][i], df['Q46'][2])
+            [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][2])
             )
     return mentor_availability
