@@ -27,13 +27,16 @@ if __name__=='__main__':
         affinity = pod_mentor_dset_affinity(pod_info, mentor_info)
 
     special_list = {
-        'athena.akrami@ucl.ac.uk': 3,
-        'cchandr1@bu.edu': 3,
-        'cohenm@pitt.edu': 2,
-        'pinotsis@mit.edu': 4,
+        'athena.akrami@ucl.ac.uk': [3],
+        'annaja@uw.edu': [4],
+        'cchandr1@bu.edu': [3],
+        'cohenm@pitt.edu': [2],
+        'jdiedric@uwo.ca': [4],
+        'raphael.s.m.kaplan@ntnu.no': [3],
+        # 'pinotsis@mit.edu': [4],
         }
-    pmg = PodMentorGraph(pod_info, mentor_info, affinity=affinity, special_list=special_list)
-    pmg.load_mentor_schedule('mentor.schedule_8B1E_xpMod2_ReExport.csv', rigidity=5000)
+    pmg = PodMentorGraph(pod_info, mentor_info, max_pod_per_mentor=3, affinity=affinity, special_list=special_list)
+    pmg.load_mentor_schedule('mentor.schedule_D6C2.csv', rigidity=5000)
     tic = time.time()
     r_id = random_id()
     pmg.export_schedules(r_id)

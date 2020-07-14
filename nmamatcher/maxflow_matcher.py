@@ -175,7 +175,7 @@ class PodMentorGraph(FlowGraph):
         if affinity is None:
             affinity = -np.ones((pod_num, mentor_num))
         if special_list is None:
-            special_list = []
+            special_list = {}
 
         # prepare available slots for pods
         pod_slots = []
@@ -206,7 +206,7 @@ class PodMentorGraph(FlowGraph):
             # only day 3-5 has potential match
             d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5))
             if mentor_info['email'][m_idx] in special_list:
-                d_idxs = [special_list[mentor_info['email'][m_idx]]]
+                d_idxs = special_list[mentor_info['email'][m_idx]]
             for d_idx in d_idxs:
                 for s_idx in mentor_info['primary_slots'][m_idx]:
                     slots.append(d_idx*SLOT_NUM+s_idx)
@@ -328,20 +328,23 @@ class PodMentorGraph(FlowGraph):
         df = pandas.read_csv(mentor_csv)
         count, total = 0, 0
         for idx in np.random.permutation(len(df)): # randomly avoid conflicts
+            if isinstance(df['pod'][idx], str):
+                total += 1
+            else:
+                continue
+
             if not df['email'][idx] in self.mentor_info['email']:
+                print('{} not found in mentor emails'.format(df['email'][idx]))
                 continue
             else:
                 m_idx = self.mentor_info['email'].index(df['email'][idx])
 
-            if not isinstance(df['day (utc+1)'][idx], str):
-                continue
-            elif df['day (utc+1)'][idx]=='Wednesday':
+            if df['day (utc+1)'][idx]=='Wednesday':
                 d_idx = 2
             elif df['day (utc+1)'][idx]=='Thursday':
                 d_idx = 3
             elif df['day (utc+1)'][idx]=='Friday':
                 d_idx = 4
-            total += 1
 
             slot_str = df['slot (utc+1)'][idx]
             if slot_str.index(':')==1:
@@ -350,6 +353,7 @@ class PodMentorGraph(FlowGraph):
             s_idx = d_idx*SLOT_NUM+s_idx-2
 
             if not df['pod'][idx] in self.pod_info['name']:
+                print('{} not found in pod names'.format(df['pod'][idx]))
                 continue
             else:
                 p_idx = self.pod_info['name'].index(df['pod'][idx])
@@ -362,20 +366,31 @@ class PodMentorGraph(FlowGraph):
                 else:
                     is_closed = True
             if is_closed:
+                print('invalid match: (day {}, slot {}, {}, {})'.format(
+                    s_idx//48, s_idx%48, df['pod'][idx], df['email'][idx],
+                    ))
                 continue
 
             for u, v in zip(path[:-1], path[1:]):
                 if self.residual[u, v]<=0:
                     is_closed = True
             if is_closed:
+                print('invalid match: (day {}, slot {}, {}, {})'.format(
+                    s_idx//48, s_idx%48, df['pod'][idx], df['email'][idx],
+                    ))
                 continue
 
             for u, v in zip(path[:-1], path[1:]):
                 self.residual[u, v] -= 1
                 self.residual[v, u] += 1
 
-                self.cost[u, v] = self.affinity_min-rigidity
-                self.cost[v, u] = -self.cost[u, v]
+            u, v = path[2], path[3]
+            self.cost[u, v] = self.affinity_min-rigidity
+            self.cost[v, u] = -self.cost[u, v]
+            u, v = path[3], path[4]
+            self.cost[u, v] = self.affinity_min-rigidity
+            self.cost[v, u] = -self.cost[u, v]
+
             count += 1
         print(f'{count}/{total} matches loaded')
 
