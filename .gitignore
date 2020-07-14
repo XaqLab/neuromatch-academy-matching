@@ -3,3 +3,6 @@ mentors.info.xlsx
 pod.maps.csv
 mentor.schedule.csv
 student.abstracts.csv
+*.pkl
+*.csv
+*.zip

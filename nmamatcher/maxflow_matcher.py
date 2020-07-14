@@ -166,7 +166,7 @@ class PodMentorGraph(FlowGraph):
 
     """
     def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
-                 use_second=False, affinity=None):
+                 use_second=False, affinity=None, special_list=None):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
@@ -174,6 +174,8 @@ class PodMentorGraph(FlowGraph):
         self.use_second = use_second
         if affinity is None:
             affinity = -np.ones((pod_num, mentor_num))
+        if special_list is None:
+            special_list = []
 
         # prepare available slots for pods
         pod_slots = []
@@ -202,12 +204,16 @@ class PodMentorGraph(FlowGraph):
         for m_idx in range(mentor_num):
             slots, flexes = [], []
             # only day 3-5 has potential match
-            for d_idx in np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5)):
+            d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5))
+            if mentor_info['email'][m_idx] in special_list:
+                d_idxs = [special_list[mentor_info['email'][m_idx]]]
+            for d_idx in d_idxs:
                 for s_idx in mentor_info['primary_slots'][m_idx]:
                     slots.append(d_idx*SLOT_NUM+s_idx)
                     flexes.append(1.)
             if use_second:
-                for d_idx in np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5)):
+                d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5))
+                for d_idx in d_idxs:
                     for s_idx in mentor_info['secondary_slots'][m_idx]:
                         if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
                             slots.append(d_idx*SLOT_NUM+s_idx)
