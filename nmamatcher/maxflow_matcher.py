@@ -277,19 +277,23 @@ class PodMentorGraph(FlowGraph):
 
         super(PodMentorGraph, self).__init__(vertices, cost, capacity)
 
-    def get_matches(self, calculate_match=True):
+    def get_matches(self, update_flow=True):
         r"""Returns pod-mentor matches.
+
+        Args
+        ----
+        update_flow: bool
+            Run Ford-Fulkerson algorithm to find maximum flow when ``True``.
 
         Returns
         -------
         matches: list
-            The matching information for each pod. Each element is a tuple like
-            `(m_idx, s_idx)` containing mentor index and slot index (with day
-            index encoded). If a pod is not assigned with any mentor, the list
-            element is ``None``.
+            The matched slots for pod-mentor session in week 1. Each element is
+            a tuple like `(s_idx, p_idx, m_idx)` containing slot index (with
+            day index encoded), pod index and mentor index.
 
         """
-        if calculate_match:
+        if update_flow:
             self.FordFulkerson()
         flow = (self.capacity-self.residual).toarray()
         matches, count = [], 0
@@ -301,13 +305,8 @@ class PodMentorGraph(FlowGraph):
                 vs, = (flow[u]>0).nonzero()
                 assert vs.size==1
                 _, m_idx, s_idx = self.vertices[vs[0]]
-                matches.append((m_idx, s_idx))
+                matches.append((s_idx, p_idx, m_idx))
                 count += 1
-            elif vs.size==0:
-                matches.append(None)
-                print('{} not assigned with any mentor'.format(
-                    self.pod_info['name'][p_idx]
-                    ))
             else:
                 raise RuntimeError(f'more than one outward flow detected for pod {p_idx}')
         print('\n{}/{} pods assigned with a mentor'.format(count, self.pod_num))
