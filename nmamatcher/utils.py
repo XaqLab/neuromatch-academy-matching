@@ -287,43 +287,6 @@ def load_student_abstracts(student_csv):
     return student_abstracts
 
 
-def slot_label(s_idx):
-    r"""Returns slot label.
-
-    Args
-    ----
-    s_idx: int
-        The index of half-hour time slots, starting from 12:00 AM with 0.
-
-    Returns
-    -------
-    s_label: str
-        A string for the time slot. `'(+1)'` or `'(-1)'` may be used for day
-        change.
-
-    """
-    assert s_idx>=-48 and s_idx<96
-    if s_idx<0:
-        s_label = ' (-1)'
-        s_idx += 48
-    elif s_idx>=48:
-        s_label = ' (+1)'
-        s_idx -= 48
-    else:
-        s_label = ''
-    def hour_label(h_idx):
-        h_label = ' AM' if h_idx<24 or h_idx==48 else ' PM'
-        h_idx %= 24
-        h_label = '{:2d}:{:02d}'.format(
-            ((h_idx//2)-1)%12+1, (h_idx%2)*30,
-            )+h_label
-        return h_label
-    s_label = '{} - {}'.format(
-        hour_label(s_idx), hour_label(s_idx+1)
-        )+s_label
-    return s_label
-
-
 stemmer = PorterStemmer()
 w_tokenizer = WhitespaceTokenizer()
 punct_re = re.compile('[{}]'.format(re.escape(string.punctuation)))

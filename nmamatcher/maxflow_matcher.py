@@ -8,8 +8,8 @@ Created on Sun Jul 12 22:45:42 2020
 import numpy as np
 from scipy.sparse import dok_matrix
 
-from .utils import slot_label, preprocess
-from .utils import MENTOR_DSET_OPTIONS, DSET_AFFINITY
+from .utils import preprocess
+from .utils import SLOT_NUM, GROUP_SLOTS, MENTOR_DSET_OPTIONS, DSET_AFFINITY
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import PCA
@@ -86,15 +86,16 @@ class FlowGraph:
 
         Augmenting paths are repeatedly calculated and used to update the
         residual flow graph. Algorithm terminates when no augmenting path can
-        be found
+        be found.
 
         """
         count = 0
+        print('\nrunning Ford-Fulkerson algorithm...')
         while True:
             parent = self.get_augmenting_path(True)
             if parent[self.vertices.index('sink')]<0:
                 # source is unconnected to sink on the residual flow graph
-                print(f'{count} augmentation performed\n')
+                print(f'{count} augmentation performed')
                 break
             self.print_path(parent)
 
@@ -106,6 +107,7 @@ class FlowGraph:
                 delta_flow = min(delta_flow, self.residual[u, v])
                 v = u
             self.max_flow += delta_flow
+            print('current flow: {}'.format(self.max_flow))
             count += 1
 
             # update residual
@@ -136,7 +138,12 @@ class PodMentorGraph(FlowGraph):
     r"""Flow graph for pod-mentor matching.
 
     During week 1 of NMA, each pod is assigned with a mentor for project
-    initialization.
+    initialization. The assigned slot will occur in the third or forth gap
+    between core sessions for all tracks.
+
+    Vertices for 'pod', 'pod-slot', 'mentor-slot' and 'mentor' are created,
+    with cost and capacity specified for each edge. The minimum cost maximum
+    flow will be the matching result.
 
     Args
     ----
@@ -148,51 +155,74 @@ class PodMentorGraph(FlowGraph):
         `.utils.load_mentor_info`.
     max_pod_per_mentor: int
         The maximum number of pods assigned to a mentor.
-    d_idxs: list of int
-        The days for project initialization, as indices in :math:`[0, 15)`.
-        Default value ``[2, 3]`` means Wednesday and Thursday of the first
-        week.
     use_second: bool
         Secondary choices from mentors are enabled. Currently, no choice
         preference is implemented, so that second choices are equivalent to
         first choices if enabled.
     affinity: (pod_num, mentor_num), array_like
-        The content topic alignment matrix between pods and mentors.
+        The affinity matrix between pods and mentors, e.g. based on dataset
+        option compatibility.
 
     """
     def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
-                 d_idxs=[2, 3], use_second=False, affinity=None):
-        self.pod_info = pod_info
-        self.mentor_info = mentor_info
+                 use_second=False, affinity=None):
+        self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
+        self.pod_num, self.mentor_num = pod_num, mentor_num
+        self.max_pod_per_mentor = max_pod_per_mentor
+        self.use_second = use_second
         if affinity is None:
             affinity = -np.ones((pod_num, mentor_num))
 
-        # gather available slots
-        mentor_slots = []
+        # prepare available slots for pods
+        pod_slots = []
+        for p_idx, tz_group in enumerate(pod_info['tz_group']):
+            slots = [] # each element is d_idx*SLOT_NUM+s_idx
+            # deal with different tracks differently, so that valid slots are in the right gap
+            if tz_group[-1]=='B':
+                for s_idx in GROUP_SLOTS[tz_group[0]+'B+']:
+                    slots.append(2*SLOT_NUM+s_idx) # second half of day 3
+                for s_idx in GROUP_SLOTS[tz_group[0]+'B-']:
+                    slots.append(4*SLOT_NUM+s_idx) # first half of day 5
+                for s_idx in GROUP_SLOTS[tz_group]:
+                    slots.append(3*SLOT_NUM+s_idx) # both halves of day 4
+            elif tz_group[-1]=='A':
+                for s_idx in GROUP_SLOTS[tz_group]: # day 4 and 5
+                    slots.append(3*SLOT_NUM+s_idx)
+                    slots.append(4*SLOT_NUM+s_idx)
+            elif tz_group[-1]=='C':
+                for s_idx in GROUP_SLOTS[tz_group]: # day 3 and 4
+                    slots.append(2*SLOT_NUM+s_idx)
+                    slots.append(3*SLOT_NUM+s_idx)
+            pod_slots.append(slots)
+
+        # prepare available slots for mentors, along with choice flexibility
+        mentor_slots, mentor_flexes = [], []
         for m_idx in range(mentor_num):
-            day_slots, day_slots_ = [], []
-            for d_idx in d_idxs:
-                if d_idx in mentor_info['primary_days'][m_idx]:
-                    for s_idx in mentor_info['primary_slots'][m_idx]:
-                        day_slots_.append((d_idx, s_idx))
-                        day_slots.append((d_idx, s_idx, 1.))
-                if use_second and d_idx in mentor_info['secondary_days'][m_idx]:
+            slots, flexes = [], []
+            # only day 3-5 has potential match
+            for d_idx in np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5)):
+                for s_idx in mentor_info['primary_slots'][m_idx]:
+                    slots.append(d_idx*SLOT_NUM+s_idx)
+                    flexes.append(1.)
+            if use_second:
+                for d_idx in np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5)):
                     for s_idx in mentor_info['secondary_slots'][m_idx]:
-                        if (d_idx, s_idx) not in day_slots_: # first choice has higher priority
-                            day_slots_.append((d_idx, s_idx))
-                            day_slots.append((d_idx, s_idx, mentor_info['flexibility'][m_idx]))
-            mentor_slots.append(day_slots)
+                        if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
+                            slots.append(d_idx*SLOT_NUM+s_idx)
+                            flexes.append(mentor_info['flexibility'][m_idx])
+            mentor_slots.append(slots)
+            mentor_flexes.append(flexes)
 
         # define vertices in the graph
         vertices = ['source', 'sink']
         for p_idx in range(pod_num):
             vertices.append(('pod', p_idx))
+            for s_idx in pod_slots[p_idx]:
+                vertices.append(('pod-slot', p_idx, s_idx))
         for m_idx in range(mentor_num):
-            for d_idx, s_idx, _ in mentor_slots[m_idx]:
-                vertices.append(('mentor', m_idx, d_idx, s_idx))
-                if ('mentor', m_idx, d_idx) not in vertices:
-                    vertices.append(('mentor', m_idx, d_idx))
+            for s_idx in mentor_slots[m_idx]:
+                vertices.append(('mentor-slot', m_idx, s_idx))
             vertices.append(('mentor', m_idx))
 
         # define edge cost and capacity in sparse matrices
@@ -203,30 +233,29 @@ class PodMentorGraph(FlowGraph):
         for p_idx in range(pod_num):
             v = vertices.index(('pod', p_idx))
             capacity[u, v] = 1
-        # pod --> mentor-day-slot
+        # pod --> pod_slot
+        for p_idx in range(pod_num):
+            u = vertices.index(('pod', p_idx))
+            for s_idx in pod_slots[p_idx]:
+                v = vertices.index(('pod-slot', p_idx, s_idx))
+                capacity[u, v] = 1
+        # pod-slot --> mentor-slot
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
-                for d_idx, s_idx, _ in mentor_slots[m_idx]:
-                    if s_idx in pod_info['slots'][p_idx]%48: # assuming each pod is available for all week
-                        u = vertices.index(('pod', p_idx))
-                        v = vertices.index(('mentor', m_idx, d_idx, s_idx))
-                        cost[u, v] = -int(100*affinity[p_idx, m_idx])
-                        cost[v, u] = -cost[u, v]
-                        capacity[u, v] = 1
-        # mentor-day-slot --> mentor-day
-        for m_idx in range(mentor_num):
-            for d_idx, s_idx, f in mentor_slots[m_idx]:
-                u = vertices.index(('mentor', m_idx, d_idx, s_idx))
-                v = vertices.index(('mentor', m_idx, d_idx))
-                cost[u, v] = -int(10*f)
-                cost[v, u] = -cost[u, v]
-                capacity[u, v] = 1
-        # mentor-day-->mentor
+                for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
+                    u = vertices.index(('pod-slot', p_idx, s_idx))
+                    v = vertices.index(('mentor-slot', m_idx, s_idx))
+                    cost[u, v] = -int(100*affinity[p_idx, m_idx]) # use int to avoid numerical negative cycle
+                    cost[v, u] = -cost[u, v]
+                    capacity[u, v] = 1
+        # mentor-slot --> mentor
         for m_idx in range(mentor_num):
             v = vertices.index(('mentor', m_idx))
-            for d_idx in set([d_idx_ for d_idx_, _, _ in mentor_slots[m_idx]]):
-                u = vertices.index(('mentor', m_idx, d_idx))
-                capacity[u, v] = len([s_idx_ for d_idx_, s_idx_, _ in mentor_slots[m_idx] if d_idx_==d_idx])
+            for s_idx, flex in zip(mentor_slots[m_idx], mentor_flexes[m_idx]):
+                u = vertices.index(('mentor-slot', m_idx, s_idx))
+                cost[u, v] = -int(10*flex)
+                cost[v, u] = -cost[u, v]
+                capacity[u, v] = 1
         # mentor-->sink
         v = vertices.index('sink')
         for m_idx in range(mentor_num):
@@ -242,22 +271,24 @@ class PodMentorGraph(FlowGraph):
         -------
         matches: list
             The matching information for each pod. Each element is a tuple like
-            `(m_idx, d_idx, s_idx)` containing mentor index, day index and slot
-            index. If a pod is not assigned with any mentor, the list element
-            is ``None``.
+            `(m_idx, s_idx)` containing mentor index and slot index (with day
+            index encoded). If a pod is not assigned with any mentor, the list
+            element is ``None``.
 
         """
         self.FordFulkerson()
         flow = (self.capacity-self.residual).toarray()
-        matches = []
-        matched_count = 0
-        for p_idx in range(self.pod_info['pod_num']):
+        matches, count = [], 0
+        for p_idx in range(self.pod_num):
             u = self.vertices.index(('pod', p_idx))
             vs, = (flow[u]>0).nonzero()
             if vs.size==1:
-                _, m_idx, d_idx, s_idx = self.vertices[vs[0]]
-                matches.append((m_idx, d_idx, s_idx))
-                matched_count += 1
+                u = vs[0]
+                vs, = (flow[u]>0).nonzero()
+                assert vs.size==1
+                _, m_idx, s_idx = self.vertices[vs[0]]
+                matches.append((m_idx, s_idx))
+                count += 1
             elif vs.size==0:
                 matches.append(None)
                 print('{} not assigned with any mentor'.format(
@@ -265,24 +296,74 @@ class PodMentorGraph(FlowGraph):
                     ))
             else:
                 raise RuntimeError(f'more than one outward flow detected for pod {p_idx}')
-        print('{}/{} pods assigned with a mentor'.format(matched_count, len(matches)))
+        print('\n{}/{} pods assigned with a mentor'.format(count, self.pod_num))
         return matches
 
-    def export_mentor_schedule(self, out_csv):
-        r"""Exports mentor schedule CSV file.
+    def export_schedules(self, r_id):
+        r"""Exports pod schedule and mentor schedule CSV files.
 
         Args
         ----
-        out_csv: str
-            The output CSV file.
+        r_id: str
+            The random ID for identifying output files.
 
         """
+        def get_day_str(d_idx):
+            if d_idx==2:
+                day_str = 'Wednesday'
+            elif d_idx==3:
+                day_str = 'Thursday'
+            elif d_idx==4:
+                day_str = 'Friday'
+            return day_str
+
+        def get_slot_str(s_idx):
+            assert s_idx>=-48 and s_idx<96
+            if s_idx<0:
+                slot_str = ' (-1)'
+                s_idx += 48
+            elif s_idx>=48:
+                slot_str = ' (+1)'
+                s_idx -= 48
+            else:
+                slot_str = ''
+            def hour_label(h_idx):
+                h_label = ' AM' if h_idx<24 or h_idx==48 else ' PM'
+                h_idx %= 24
+                h_label = '{:2d}:{:02d}'.format(
+                    ((h_idx//2)-1)%12+1, (h_idx%2)*30,
+                    )+h_label
+                return h_label
+            slot_str = '{} - {}'.format(
+                hour_label(s_idx), hour_label(s_idx+1)
+                )+slot_str
+            return slot_str
+
         matches = self.get_matches()
 
+        # export pod schedule
+        with open(f'pod.schedule_{r_id}.csv', 'w') as f:
+            f.write('pod,pod time zone group,day (utc+1),slot (utc+1),mentor,mentor e-mail,zoom link\n')
+            for p_idx, (m_idx, s_idx) in enumerate(matches):
+                # convert from UTC to UTC+1
+                s_idx += 2
+                d_idx = s_idx//SLOT_NUM
+                s_idx = s_idx%SLOT_NUM
+                f.write('{},{},{},{},{},{},\n'.format(
+                    self.pod_info['name'][p_idx],
+                    self.pod_info['tz_group'][p_idx],
+                    get_day_str(d_idx), get_slot_str(s_idx),
+                    ' '.join([
+                    self.mentor_info['first_name'][m_idx],
+                    self.mentor_info['last_name'][m_idx]
+                    ]),
+                    self.mentor_info['email'][m_idx]
+                    ))
+
         available_count, assigned_count, usage_count = 0, 0, 0
-        with open(out_csv, 'w') as f:
-            f.write('name,email,day,slot (UNIVERSAL),mentor time zone,slot (LOCAL),pod,pod time zone group,zoom link\n')
-            for m_idx in range(self.mentor_info['mentor_num']):
+        with open(f'mentor.schedule_{r_id}.csv', 'w') as f:
+            f.write('name,email,day (utc+1),slot (utc+1),mentor time zone,slot (local),pod,pod time zone group,zoom link\n')
+            for m_idx in range(self.mentor_num):
                 m_name = ' '.join([
                     self.mentor_info['first_name'][m_idx],
                     self.mentor_info['last_name'][m_idx]
@@ -294,51 +375,43 @@ class PodMentorGraph(FlowGraph):
                     available_count += 1
 
                     assignments = []
-                    for p_idx, match in enumerate(matches): # (m_idx, day, s_idx)
+                    for p_idx, match in enumerate(matches): # (m_idx, s_idx)
                         if match and match[0]==m_idx:
-                            assignments.append((p_idx, match[1], match[2]))
+                            assignments.append((p_idx, match[1]))
 
                     if assignments:
                         assigned_count += 1
                         usage_count += len(assignments)/m_capacity
 
                         out_strs = []
-                        for p_idx, d_idx, s_idx in assignments:
+                        for p_idx, s_idx in assignments:
                             # convert from UTC to UTC+1
                             s_idx += 2
-                            if s_idx>=48:
-                                d_idx += 1
-                                s_idx -= 48
+                            d_idx = s_idx//SLOT_NUM
+                            s_idx = s_idx%SLOT_NUM
 
-                            if d_idx==2:
-                                day = 'Wednesday'
-                            elif d_idx==3:
-                                day = 'Thursday'
-                            elif d_idx==4:
-                                day = 'Friday'
-
-                            slot_universal = slot_label(s_idx)
-
-                            m_tz = self.mentor_info['timezone'][m_idx]
+                            day_str = get_day_str(d_idx)
+                            slot_str_universal = get_slot_str(s_idx)
 
                             # convert to local time zone
                             s_idx -= 2
+                            m_tz = self.mentor_info['timezone'][m_idx]
                             if m_tz[3]=='+':
                                 s_idx += int(m_tz[4:])*2
                             else:
                                 s_idx -= int(m_tz[4:])*2
-                            slot_local = slot_label(s_idx)
+                            slot_str_local = get_slot_str(s_idx)
 
                             p_name = self.pod_info['name'][p_idx]
-                            p_group = self.pod_info['timezone_label'][p_idx]
+                            p_group = self.pod_info['tz_group'][p_idx]
 
                             z_link = ''
 
                             out_strs.append(','.join([
-                                day, slot_universal, m_tz, slot_local, p_name, p_group, z_link
+                                day_str, slot_str_universal, m_tz,
+                                slot_str_local, p_name, p_group, z_link
                                 ]))
-                        out_strs = sorted(out_strs)
-                        for out_str in out_strs:
+                        for out_str in sorted(out_strs):
                             f.write(','.join([
                                 m_name, m_email, out_str
                                 ])+'\n')
@@ -350,8 +423,8 @@ class PodMentorGraph(FlowGraph):
                     f.write(','.join([
                         m_name, m_email, '', '', '', '', '', '', ''
                         ])+'\n')
-        print('{}/{} mentors available'.format(
-            available_count, self.mentor_info['mentor_num']
+        print('{}/{} mentors available for week 1'.format(
+            available_count, self.mentor_num
             ))
         print('{} mentors assigned with at least one pod, average usage {:.2%}'.format(
             assigned_count, usage_count/assigned_count
