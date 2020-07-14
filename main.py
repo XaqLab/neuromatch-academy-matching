@@ -31,7 +31,7 @@ if __name__=='__main__':
     r_id = random_id()
     pmg.export_schedules(r_id)
     toc = time.time()
-    print('{:.2f} mins elapsed'.format(toc-tic))
+    print('{:.1f} mins elapsed'.format((toc-tic)/60))
     with open(f'pod-mentor.graph_{r_id}.pkl', 'wb') as f:
         pickle.dump({
             'affinity_type': args.affinity_type,
