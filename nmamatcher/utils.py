@@ -21,7 +21,9 @@ GROUP_SLOTS = {} # NMA time zone groups in UTC
 offsets = {'1': 0, '2': 14, '3': 34}
 hour_spans = {
     'A': np.arange(-8, 0),
+    'B-': np.arange(-4, 0),
     'B': np.concatenate((np.arange(-4, 0), np.arange(14, 18))),
+    'B+': np.arange(14, 18),
     'C': np.arange(14, 22),
     }
 for key_a in offsets:
@@ -96,9 +98,7 @@ def load_pod_info(pod_csv):
 
 
 def load_mentor_info(mentor_xlsx):
-    r"""Loads mentor hour availability.
-
-    Time slots and the available weekdays are all in UTC.
+    r"""Loads mentor information.
 
     Args
     ----
@@ -125,7 +125,8 @@ def load_mentor_info(mentor_xlsx):
         `'primary_slots'`: list
             The first choice of time slots of each mentor. Each element is a
             list of ints, containing indices ranging in :math:`[0, 48)`
-            corresponding to the 48 half-hour slots.
+            corresponding to the 48 half-hour slots. Time slots and the
+            available days are all in UTC.
         `'flexibility'`: list of floats
             The willingness for second choice of each mentor. Each element is
             a float in :math:`[0, 1]`.
@@ -135,7 +136,7 @@ def load_mentor_info(mentor_xlsx):
         `'secondary_slots'`: list
             The second choice of time slots of each mentor, with the same
             format as `'secondary_days'`.
-        `'abstracts'`: list of str
+        `'abstract'`: list of str
             The abstract of each mentor, extracted from sheet ``'Confirmed
             Mentors - Short Googl'``.
         `'dset_option'`: list
@@ -144,6 +145,7 @@ def load_mentor_info(mentor_xlsx):
 
     """
     def check_duplicate_email(df_series):
+        r"""Returns a list of emails if no duplicate is found."""
         emails = [val.lower() for val in df_series]
         if len(set(emails))!=len(emails):
             for m_email, count in Counter(emails).items():
@@ -151,6 +153,35 @@ def load_mentor_info(mentor_xlsx):
                     print(f'{m_email} occurred {count} times')
             raise RuntimeError('duplicate e-mails found')
         return emails
+
+    def get_slots(start_time, duration_str):
+        r"""Returns the specified slot indices.
+
+        Args
+        ----
+        start_time: datetime
+            A time object returned by pandas.
+        duration_str: str
+            The answer from Google sheet, only 4 different values are
+            encountered.
+
+        Returns
+        -------
+        A list of valid slot indices.
+
+        """
+        slot_start = start_time.hour*2+start_time.minute//30
+        if duration_str=='1/2 hour':
+            slot_end = slot_start+1
+        elif duration_str=='1 hour':
+            slot_end = slot_start+2
+        elif duration_str=='1.5 hour':
+            slot_end = slot_start+3
+        elif duration_str=='2 hour':
+            slot_end = slot_start+4
+        else:
+            raise RuntimeError(f'duration \'{duration_str}\' unrecognized')
+        return list(range(slot_start, slot_end))
 
     df = pandas.read_excel(mentor_xlsx, 'Project mentors - Final hours')
     mentor_info = {
@@ -169,27 +200,13 @@ def load_mentor_info(mentor_xlsx):
         'secondary_slots': [],
         })
 
-    def get_slots(start_time, duration_str):
-        slot_start = start_time.hour*2
-        if duration_str=='1/2 hour':
-            slot_end = slot_start+1
-        elif duration_str=='1 hour':
-            slot_end = slot_start+2
-        elif duration_str=='1.5 hour':
-            slot_end = slot_start+3
-        elif duration_str=='2 hour':
-            slot_end = slot_start+4
-        else:
-            raise RuntimeError(f'duration \'{duration_str}\' unrecognized')
-        return list(range(slot_start, slot_end))
-
     for i in range(2, len(df)):
         mentor_info['primary_days'].append([
             d_idx for d_idx in range(15) if isinstance(
                 df['Q3_{}_{}'.format(d_idx//5+1, d_idx%5+1)][i], str
                 )
             ])
-        mentor_info['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][2]))
+        mentor_info['primary_slots'].append(get_slots(df['Q25'][i], df['Q41'][i]))
 
         if df['Q42'][i]=='No':
             f_i = 0
@@ -208,16 +225,16 @@ def load_mentor_info(mentor_xlsx):
             [] if f_i==0 else get_slots(df['Q45'][i], df['Q46'][i])
             )
 
-    mentor_info['abstracts'] = []
+    mentor_info['abstract'] = []
     df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Short Googl')
     emails = check_duplicate_email(df['Email Address'])
     for m_email in mentor_info['email']:
         if m_email in emails:
-            mentor_info['abstracts'].append(
+            mentor_info['abstract'].append(
                 df[df.columns[11]][emails.index(m_email)]
                 )
         else:
-            mentor_info['abstracts'].append('')
+            mentor_info['abstract'].append('')
 
     mentor_info['dset_option'] = []
     df = pandas.read_excel(mentor_xlsx, 'Confirmed Mentors - Full Applic')
@@ -322,6 +339,11 @@ def preprocess(text, stemming=True):
         Input abstract.
     stemming : bool
         Porter stemmer is applied if ``True``.
+
+    Returns
+    -------
+    Preprocessed abstract string.
+
     """
 
     if isinstance(text, (type(None), float)):
@@ -347,8 +369,7 @@ def random_id(str_len=4):
 
     Returns
     -------
-        A string of specified length, containing ``'0'``-``'9'``,
-        ``'A'``-``'F'``.
+    A string of specified length, containing ``'0'``-``'9'``, ``'A'``-``'F'``.
 
     """
     return ''.join(['{:X}'.format(random.randrange(16)) for _ in range(str_len)])
