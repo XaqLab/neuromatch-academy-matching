@@ -63,13 +63,8 @@ def load_pod_info(pod_csv):
             The name of each pod.
         `'pod_email'`: list of str
             The e-mail address of each pod.
-        `'timezone_label'`: list of str
+        `'tz_group'`: list of str
             The time zone label of each pod, e.g. ``'1A'``, ``'3B'``.
-        `'slots'`: list
-            The time slots for project of each pod, determined by
-            `'timezone_label'`. Each element is a list of ints, containing
-            indices ranging in :math:`[0, 48)` corresponding to the 48
-            half-hour slots in UTC.
         `'dset_option'`: list of str
             The dataset option of each pod, reformatted through
             ``POD_DSET_OPTIONS``.
@@ -85,16 +80,14 @@ def load_pod_info(pod_csv):
 
     pod_info.update({
         'pod_email': [],
-        'timezone_label': [],
-        'slots': [],
+        'tz_group': [],
         'dset_option': [],
         'student_emails': [],
         })
     for p_name in pod_info['name']:
         idxs, = (pod_names_==p_name).nonzero()
         pod_info['pod_email'].append(df['pod_email'][idxs[0]].lower())
-        pod_info['timezone_label'].append(df['pod_slot'][idxs[0]])
-        pod_info['slots'].append(GROUP_SLOTS[df['pod_slot'][idxs[0]]])
+        pod_info['tz_group'].append(df['pod_slot'][idxs[0]])
         pod_info['dset_option'].append(POD_DSET_OPTIONS[df['pod_dataset'][idxs[0]]])
         pod_info['student_emails'].append([
             df['student_email'][idx].lower() for idx in idxs
