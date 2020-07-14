@@ -5,6 +5,7 @@ Created on Sun Jul 12 22:45:42 2020
 @author: Zhe
 """
 
+import pandas
 import numpy as np
 from scipy.sparse import dok_matrix
 
@@ -240,6 +241,7 @@ class PodMentorGraph(FlowGraph):
                 v = vertices.index(('pod-slot', p_idx, s_idx))
                 capacity[u, v] = 1
         # pod-slot --> mentor-slot
+        self.affinity_min, self.affinity_max = np.inf, -np.inf
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
                 for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
@@ -248,6 +250,11 @@ class PodMentorGraph(FlowGraph):
                     cost[u, v] = -int(100*affinity[p_idx, m_idx]) # use int to avoid numerical negative cycle
                     cost[v, u] = -cost[u, v]
                     capacity[u, v] = 1
+
+                    if cost[u, v]<self.affinity_min:
+                        self.affinity_min = cost[u, v]
+                    if cost[u, v]>self.affinity_max:
+                        self.affinity_max = cost[u, v]
         # mentor-slot --> mentor
         for m_idx in range(mentor_num):
             v = vertices.index(('mentor', m_idx))
@@ -264,7 +271,7 @@ class PodMentorGraph(FlowGraph):
 
         super(PodMentorGraph, self).__init__(vertices, cost, capacity)
 
-    def get_matches(self):
+    def get_matches(self, calculate_match=True):
         r"""Returns pod-mentor matches.
 
         Returns
@@ -276,7 +283,8 @@ class PodMentorGraph(FlowGraph):
             element is ``None``.
 
         """
-        self.FordFulkerson()
+        if calculate_match:
+            self.FordFulkerson()
         flow = (self.capacity-self.residual).toarray()
         matches, count = [], 0
         for p_idx in range(self.pod_num):
@@ -299,7 +307,104 @@ class PodMentorGraph(FlowGraph):
         print('\n{}/{} pods assigned with a mentor'.format(count, self.pod_num))
         return matches
 
-    def export_schedules(self, r_id):
+    def load_mentor_schedule(self, mentor_csv, rigidity=50):
+        r"""Loads from an old mentor schedule CSV file.
+
+        Args
+        ----
+        mentor_csv: str
+            The old CSV file, with head adjusted to current export format.
+
+        """
+        self.residual = self.capacity.copy()
+        print(f'\nflow reset, loading from {mentor_csv}...')
+
+        df = pandas.read_csv(mentor_csv)
+        count, total = 0, 0
+        for idx in np.random.permutation(len(df)): # randomly avoid conflicts
+            if not df['email'][idx] in self.mentor_info['email']:
+                continue
+            else:
+                m_idx = self.mentor_info['email'].index(df['email'][idx])
+
+            if not isinstance(df['day (utc+1)'][idx], str):
+                continue
+            elif df['day (utc+1)'][idx]=='Wednesday':
+                d_idx = 2
+            elif df['day (utc+1)'][idx]=='Thursday':
+                d_idx = 3
+            elif df['day (utc+1)'][idx]=='Friday':
+                d_idx = 4
+            total += 1
+
+            slot_str = df['slot (utc+1)'][idx]
+            if slot_str.index(':')==1:
+                slot_str = ' '+slot_str
+            s_idx = [self._get_slot_str(i) for i in range(48)].index(slot_str)
+            s_idx = d_idx*SLOT_NUM+s_idx-2
+
+            if not df['pod'][idx] in self.pod_info['name']:
+                continue
+            else:
+                p_idx = self.pod_info['name'].index(df['pod'][idx])
+
+            path, is_closed = [], False
+            for u in ['source', ('pod', p_idx), ('pod-slot', p_idx, s_idx),
+                      ('mentor-slot', m_idx, s_idx), ('mentor', m_idx), 'sink']:
+                if u in self.vertices:
+                    path.append(self.vertices.index(u))
+                else:
+                    is_closed = True
+            if is_closed:
+                continue
+
+            for u, v in zip(path[:-1], path[1:]):
+                if self.residual[u, v]<=0:
+                    is_closed = True
+            if is_closed:
+                continue
+
+            for u, v in zip(path[:-1], path[1:]):
+                self.residual[u, v] -= 1
+                self.residual[v, u] += 1
+
+                self.cost[u, v] = self.affinity_min-rigidity
+                self.cost[v, u] = -self.cost[u, v]
+            count += 1
+        print(f'{count}/{total} matches loaded')
+
+    def _get_day_str(self, d_idx):
+        if d_idx==2:
+            day_str = 'Wednesday'
+        elif d_idx==3:
+            day_str = 'Thursday'
+        elif d_idx==4:
+            day_str = 'Friday'
+        return day_str
+
+    def _get_slot_str(self, s_idx):
+        assert s_idx>=-48 and s_idx<96
+        if s_idx<0:
+            slot_str = ' (-1)'
+            s_idx += 48
+        elif s_idx>=48:
+            slot_str = ' (+1)'
+            s_idx -= 48
+        else:
+            slot_str = ''
+        def hour_label(h_idx):
+            h_label = ' AM' if h_idx<24 or h_idx==48 else ' PM'
+            h_idx %= 24
+            h_label = '{:2d}:{:02d}'.format(
+                ((h_idx//2)-1)%12+1, (h_idx%2)*30,
+                )+h_label
+            return h_label
+        slot_str = '{} - {}'.format(
+            hour_label(s_idx), hour_label(s_idx+1)
+            )+slot_str
+        return slot_str
+
+    def export_schedules(self, r_id, calculate_match=True):
         r"""Exports pod schedule and mentor schedule CSV files.
 
         Args
@@ -308,57 +413,34 @@ class PodMentorGraph(FlowGraph):
             The random ID for identifying output files.
 
         """
-        def get_day_str(d_idx):
-            if d_idx==2:
-                day_str = 'Wednesday'
-            elif d_idx==3:
-                day_str = 'Thursday'
-            elif d_idx==4:
-                day_str = 'Friday'
-            return day_str
-
-        def get_slot_str(s_idx):
-            assert s_idx>=-48 and s_idx<96
-            if s_idx<0:
-                slot_str = ' (-1)'
-                s_idx += 48
-            elif s_idx>=48:
-                slot_str = ' (+1)'
-                s_idx -= 48
-            else:
-                slot_str = ''
-            def hour_label(h_idx):
-                h_label = ' AM' if h_idx<24 or h_idx==48 else ' PM'
-                h_idx %= 24
-                h_label = '{:2d}:{:02d}'.format(
-                    ((h_idx//2)-1)%12+1, (h_idx%2)*30,
-                    )+h_label
-                return h_label
-            slot_str = '{} - {}'.format(
-                hour_label(s_idx), hour_label(s_idx+1)
-                )+slot_str
-            return slot_str
-
-        matches = self.get_matches()
+        matches = self.get_matches(calculate_match)
 
         # export pod schedule
         with open(f'pod.schedule_{r_id}.csv', 'w') as f:
             f.write('pod,pod time zone group,day (utc+1),slot (utc+1),mentor,mentor e-mail,zoom link\n')
-            for p_idx, (m_idx, s_idx) in enumerate(matches):
-                # convert from UTC to UTC+1
-                s_idx += 2
-                d_idx = s_idx//SLOT_NUM
-                s_idx = s_idx%SLOT_NUM
-                f.write('{},{},{},{},{},{},\n'.format(
-                    self.pod_info['name'][p_idx],
-                    self.pod_info['tz_group'][p_idx],
-                    get_day_str(d_idx), get_slot_str(s_idx),
-                    ' '.join([
-                    self.mentor_info['first_name'][m_idx],
-                    self.mentor_info['last_name'][m_idx]
-                    ]),
-                    self.mentor_info['email'][m_idx]
-                    ))
+            for p_idx in range(self.pod_num):
+                if matches[p_idx]:
+                    m_idx, s_idx = matches[p_idx]
+                    # convert from UTC to UTC+1
+                    s_idx += 2
+                    d_idx = s_idx//SLOT_NUM
+                    s_idx = s_idx%SLOT_NUM
+                    f.write('{},{},{},{},{},{},\n'.format(
+                        self.pod_info['name'][p_idx],
+                        self.pod_info['tz_group'][p_idx],
+                        self._get_day_str(d_idx), self._get_slot_str(s_idx),
+                        ' '.join([
+                        self.mentor_info['first_name'][m_idx],
+                        self.mentor_info['last_name'][m_idx]
+                        ]),
+                        self.mentor_info['email'][m_idx]
+                        ))
+                else:
+                    f.write('{},{},{},{},{},{},\n'.format(
+                        self.pod_info['name'][p_idx],
+                        self.pod_info['tz_group'][p_idx],
+                        'N/A', 'N/A', 'N/A', 'N/A'
+                        ))
 
         available_count, assigned_count, usage_count = 0, 0, 0
         with open(f'mentor.schedule_{r_id}.csv', 'w') as f:
@@ -390,8 +472,10 @@ class PodMentorGraph(FlowGraph):
                             d_idx = s_idx//SLOT_NUM
                             s_idx = s_idx%SLOT_NUM
 
-                            day_str = get_day_str(d_idx)
-                            slot_str_universal = get_slot_str(s_idx)
+                            day_str = self._get_day_str(d_idx)
+                            slot_str_universal = self._get_slot_str(s_idx)
+                            if slot_str_universal.startswith(' '):
+                                slot_str_universal = slot_str_universal[1:]
 
                             # convert to local time zone
                             s_idx -= 2
@@ -400,7 +484,9 @@ class PodMentorGraph(FlowGraph):
                                 s_idx += int(m_tz[4:])*2
                             else:
                                 s_idx -= int(m_tz[4:])*2
-                            slot_str_local = get_slot_str(s_idx)
+                            slot_str_local = self._get_slot_str(s_idx)
+                            if slot_str_local.startswith(' '):
+                                slot_str_local = slot_str_local[1:]
 
                             p_name = self.pod_info['name'][p_idx]
                             p_group = self.pod_info['tz_group'][p_idx]

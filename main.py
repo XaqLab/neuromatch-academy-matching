@@ -27,6 +27,7 @@ if __name__=='__main__':
         affinity = pod_mentor_dset_affinity(pod_info, mentor_info)
 
     pmg = PodMentorGraph(pod_info, mentor_info, affinity=affinity)
+    pmg.load_mentor_schedule('mentor.schedule_8B1E_xpMod2_ReExport.csv', rigidity=5000)
     tic = time.time()
     r_id = random_id()
     pmg.export_schedules(r_id)
