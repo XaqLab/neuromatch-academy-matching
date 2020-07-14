@@ -5,12 +5,11 @@ Created on Sun Jul 12 19:25:03 2020
 @author: Zhe
 """
 
-import pandas
+import pandas, random
 import numpy as np
 from collections import Counter
 
-import re
-import string
+import re, string
 from unidecode import unidecode
 from nltk.stem.porter import PorterStemmer
 from nltk.tokenize import WhitespaceTokenizer
@@ -343,3 +342,20 @@ def preprocess(text, stemming=True):
             text_preprocess = w_tokenizer.tokenize(text)
         text_preprocess = ' '.join(text_preprocess)
     return text_preprocess
+
+
+def random_id(str_len=4):
+    r"""Returns a random ID string.
+
+    Args
+    ----
+    str_len: int
+        Desired string length.
+
+    Returns
+    -------
+        A string of specified length, containing ``'0'``-``'9'``,
+        ``'A'``-``'F'``.
+
+    """
+    return ''.join(['{:X}'.format(random.randrange(16)) for _ in range(str_len)])
