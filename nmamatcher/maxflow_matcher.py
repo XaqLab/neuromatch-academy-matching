@@ -59,6 +59,8 @@ class FlowGraph:
 
         Returns
         -------
+        d: (N,), array_like
+            The minimum distance of each vertices to source.
         parent: (N,), array_like
             The parent of each vertices along the shortest path to the source.
 
@@ -125,6 +127,8 @@ class FlowGraph:
 
         Args
         ----
+        d: (N,), array_like
+            The minimum distance of each vertices to source.
         parent: (N,), array_like
             The parent of each vertices along the shortest path to the source.
 
@@ -396,9 +400,26 @@ class PodMentorGraph(FlowGraph):
                             )
         return matches
 
-    def get_pod_centered_view(self, matches):
+    def get_pod_centered_view(self, matches, print_hanging=True):
+        r"""Returns pod-centered view of matches.
+
+        Args
+        ----
+        matches: list
+            The matched slots for pod-mentor session in week 1. Each element is
+            a tuple like `(s_idx, pod_name, mentor_email)`.
+        print_hanging: bool
+            Print unassigned pods when ``True``.
+
+        Returns
+        -------
+        p_matches: dict
+            A dict of matched mentors for all pods with pod name as key, and
+            the slot and mentor index `(s_idx, m_idx)` as value.
+
+        """
         matched = np.zeros((self.pod_num,), np.float)
-        p_matches = {}
+        p_matches = dict((pod_name, []) for pod_name in self.pod_info['name'])
         for s_idx, pod_name, mentor_email in matches:
             if pod_name in self.pod_info['name']:
                 p_idx = self.pod_info['name'].index(pod_name)
@@ -410,26 +431,37 @@ class PodMentorGraph(FlowGraph):
             else:
                 m_idx = None
 
-            if pod_name not in p_matches:
+            if pod_name not in p_matches: # probably removed pods
                 p_matches[pod_name] = []
             p_matches[pod_name].append((s_idx, m_idx))
-        # out_strs = []
-        # for pod_name in sorted(p_strs):
-        #     out_strs += sorted(p_strs[pod_name])
 
-        # with open(f'pod.schedule_{r_id}.csv', 'w') as f:
-        #     f.write('pod,pod time zone group,day (utc+1),slot (utc+1),mentor,mentor e-mail,zoom link\n')
-        #     for out_str in sorted(out_strs):
-        #         f.write(out_str)
-        # print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
-        # print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
-        # if np.any(matched==0):
-        #     print('hanging pods:')
-        #     for p_idx in range(self.pod_num):
-        #         if not matched[p_idx]:
-        #             print(self.pod_info['name'][p_idx])
+        print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
+        print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
+        if print_hanging and np.any(matched==0):
+            print('hanging pods:')
+            for p_idx in range(self.pod_num):
+                if matched[p_idx]==0:
+                    print(self.pod_info['name'][p_idx])
+        return p_matches
 
-    def get_mentor_centered_view(self, matches):
+    def get_mentor_centered_view(self, matches, print_idle=False):
+        r"""Returns mentor-centered view of matches.
+
+        Args
+        ----
+        matches: list
+            The matched slots for pod-mentor session in week 1. Each element is
+            a tuple like `(s_idx, pod_name, mentor_email)`.
+        print_idle: bool
+            Print unassigned but available mentors when ``True``.
+
+        Returns
+        -------
+        m_matches: dict
+            A dict of matched pods for all mentors with e-mail address as key,
+            and the slot and pod index `(s_idx, p_idx)` as value.
+
+        """
         usage = np.zeros((self.mentor_num,), np.float)
         limit = np.zeros((self.mentor_num,), np.float)
         for m_idx in range(self.mentor_num):
@@ -448,23 +480,28 @@ class PodMentorGraph(FlowGraph):
             else:
                 m_idx = None
 
-            if mentor_email not in m_matches:
+            if mentor_email not in m_matches: # probably removed mentors
                 m_matches[mentor_email] = []
             m_matches[mentor_email].append((s_idx, p_idx))
 
         print('\n{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
         print('{:.2%} usage for the busy mentors'.format((usage/(limit+1e-8))[usage>0].mean()))
-        # print('idle mentors:')
-        # for m_idx in range(self.mentor_num):
-        #     if usage[m_idx]==0:
-        #         print(' '.join([
-        #             self.mentor_info['first_name'][m_idx],
-        #             self.mentor_info['last_name'][m_idx]+',',
-        #             '('+self.mentor_info['email'][m_idx]+')'
-        #             ]))
+        if print_idle and np.any(np.logical_and(usage==0, limit>0)):
+            print('idle mentors:')
+            count = 0
+            for m_idx in range(self.mentor_num):
+                if usage[m_idx]==0 and limit[m_idx]>0:
+                    count += 1
+                    print(' '.join([
+                        self.mentor_info['first_name'][m_idx],
+                        self.mentor_info['last_name'][m_idx]+',',
+                        '('+self.mentor_info['email'][m_idx]+')'
+                        ]))
+            print('\n{} mentors available but not assigned'.format(count))
         return m_matches
 
-    def export_pod_schedule(self, r_id, matches=None, update_flow=True):
+    def export_pod_schedule(self, r_id, matches=None,
+                            update_flow=True, print_hanging=True):
         r"""Exports pod schedule CSV file.
 
         Args
@@ -478,62 +515,47 @@ class PodMentorGraph(FlowGraph):
         update_flow: bool
             Run Ford-Fulkerson algorithm to find maximum flow when ``True``.
             Used only when `matches` is ``None``.
+        print_hanging: bool
+            Print unassigned pod when ``True``.
 
         """
         if matches is None:
             matches = self.get_matches(update_flow)
 
-        matched = np.zeros((self.pod_num,), np.float)
-        p_strs = {}
-        for s_idx, pod_name, mentor_email in matches:
-            if pod_name in self.pod_info['name']:
-                p_idx = self.pod_info['name'].index(pod_name)
-                matched[p_idx] += 1
-            else:
-                p_idx = None
-            if mentor_email in self.mentor_info['email']:
-                m_idx = self.mentor_info['email'].index(mentor_email)
-            else:
-                m_idx = None
-
-            s_idx += 2 # convert from UTC to UTC+1
-            d_idx = s_idx//SLOT_NUM
-            s_idx = s_idx%SLOT_NUM
-
-            if pod_name not in p_strs:
-                p_strs[pod_name] = []
-            p_strs[pod_name].append('{},{},{},{},{},{},\n'.format(
-                pod_name, 'N/A' if p_idx is None else self.pod_info['tz_group'][p_idx],
-                self._get_day_str(d_idx), self._get_slot_str(s_idx),
-                'N/A' if m_idx is None else ' '.join([
-                    self.mentor_info['first_name'][m_idx],
-                    self.mentor_info['last_name'][m_idx]
-                    ]),
-                mentor_email,
-                ))
+        p_matches = self.get_pod_centered_view(matches, print_hanging)
         out_strs = []
-        for pod_name in sorted(p_strs):
-            out_strs += sorted(p_strs[pod_name])
+        for pod_name in sorted(self.pod_info['name']):
+            p_idx = self.pod_info['name'].index(pod_name)
+            if p_matches[pod_name]:
+                _out_strs = []
+                for s_idx, m_idx in p_matches[pod_name]:
+                    s_idx += 2 # convert from UTC to UTC+1
+                    d_idx = s_idx//SLOT_NUM
+                    s_idx = s_idx%SLOT_NUM
+
+                    _out_strs.append('{},{},{},{},{},{},\n'.format(
+                        pod_name, self.pod_info['tz_group'][p_idx],
+                        self._get_day_str(d_idx), self._get_slot_str(s_idx),
+                        ' '.join([
+                            self.mentor_info['first_name'][m_idx],
+                            self.mentor_info['last_name'][m_idx]
+                            ]),
+                        self.mentor_info['email'][m_idx],
+                        ))
+                out_strs += sorted(_out_strs)
+            else:
+                out_strs.append('{},{},{},{},{},{},\n'.format(
+                    pod_name, self.pod_info['tz_group'][p_idx],
+                    '', '', '', '',
+                    ))
 
         with open(f'pod.schedule_{r_id}.csv', 'w') as f:
             f.write('pod,pod time zone group,day (utc+1),slot (utc+1),mentor,mentor e-mail,zoom link\n')
-            for out_str in sorted(out_strs):
+            for out_str in out_strs:
                 f.write(out_str)
-        print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
-        print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
-        if np.any(matched==0):
-            print('hanging pods:')
-            for p_idx in range(self.pod_num):
-                if not matched[p_idx]:
-                    print('{}, {}'.format(
-                        self.pod_info['name'][p_idx],
-                        self.pod_info['tz_group'][p_idx],
-                        ))
-            return False
-        else:
-            return True
 
-    def export_mentor_schedule(self, r_id, matches=None, update_flow=True):
+    def export_mentor_schedule(self, r_id, matches=None,
+                               update_flow=True, print_idle=True):
         r"""Exports mentor schedule CSV file.
 
         Args
@@ -547,16 +569,18 @@ class PodMentorGraph(FlowGraph):
         update_flow: bool
             Run Ford-Fulkerson algorithm to find maximum flow when ``True``.
             Used only when `matches` is ``None``.
+        print_idle: bool
+            Print unassigned mentor when ``True``.
 
         """
         if matches is None:
             matches = self.get_matches(update_flow)
 
-        m_matches = self.get_mentor_centered_view(matches)
+        m_matches = self.get_mentor_centered_view(matches, print_idle)
         out_strs = []
         for mentor_email in sorted(self.mentor_info['email']):
             m_idx = self.mentor_info['email'].index(mentor_email)
-            if mentor_email in m_matches and m_matches[mentor_email]:
+            if m_matches[mentor_email]:
                 _out_strs = []
                 for s_idx, p_idx in m_matches[mentor_email]:
                     s_idx += 2 # convert from UTC to UTC+1
@@ -602,27 +626,29 @@ class PodMentorGraph(FlowGraph):
                 f.write(out_str)
 
     @classmethod
-    def read_schedule(cls, r_id, csv_type='pod'):
+    def read_schedule(cls, r_id, csv_type='pod', now_idx=0):
         r"""Exports mentor schedule CSV file.
 
         Args
         ----
         r_id: str
             The random ID for identifying output files.
+        now_idx: int
+            The slot index used to determine past and future, in UTC.
 
         Returns
         -------
-        matches: list
-            A list of tuples as `(s_idx, pod_name, mentor_email)`.
+        matches_past, matches_future: list
+            Each is a list of tuples as `(s_idx, pod_name, mentor_email)`.
 
         """
         assert csv_type in ['pod', 'mentor']
         df = pandas.read_csv(f'{csv_type}.schedule_{r_id}.csv')
         day_strs = [cls._get_day_str(d_idx) for d_idx in range(2, 5)]
         slot_strs = [cls._get_slot_str(s_idx) for s_idx in range(SLOT_NUM)]
-        matches = []
+        matches_past, matches_future = [], []
         for i in range(len(df)):
-            if not isinstance(df['pod'][i], str):
+            if not isinstance(df['day (utc+1)'][i], str):
                 continue
             day_str = df['day (utc+1)'][i]
             slot_str = df['slot (utc+1)'][i]
@@ -634,9 +660,12 @@ class PodMentorGraph(FlowGraph):
 
             d_idx = day_strs.index(day_str)+2
             s_idx = slot_strs.index(slot_str)
-            s_idx = d_idx*SLOT_NUM+s_idx-2
-            matches.append((s_idx, pod_name, mentor_email))
-        return matches
+            s_idx = d_idx*SLOT_NUM+s_idx-2 # convert from UCT+1 to UTC
+            if s_idx<now_idx:
+                matches_past.append((s_idx, pod_name, mentor_email))
+            else:
+                matches_future.append((s_idx, pod_name, mentor_email))
+        return matches_past, matches_future
 
     def load_matches(self, matches, volatility=0):
         r"""Loads existing matches to the flow graph.
