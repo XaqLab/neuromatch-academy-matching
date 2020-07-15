@@ -76,7 +76,7 @@ def load_pod_info(pod_csv):
 
     """
     df = pandas.read_csv(pod_csv)
-    pod_names_ = np.array(df['pod_name'].tolist(), dtype=np.object)
+    pod_names_ = np.array(df['pod_name'].tolist(), np.object)
     pod_info = {'name': np.unique(pod_names_).tolist()}
     pod_info['pod_num'] = len(pod_info['name'])
 
