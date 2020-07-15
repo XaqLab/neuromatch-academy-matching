@@ -81,7 +81,7 @@ class FlowGraph:
                     parent[v] = u
                     if v not in queue:
                         queue.append(v)
-        return parent
+        return d, parent
 
     def FordFulkerson(self):
         r"""Implements Ford-Fulkerson algorithm to find min-cost max-flow.
@@ -94,12 +94,12 @@ class FlowGraph:
         count = 0
         print('\nrunning Ford-Fulkerson algorithm...')
         while True:
-            parent = self.get_augmenting_path(True)
+            d, parent = self.get_augmenting_path(True)
             if parent[self.vertices.index('sink')]<0:
                 # source is unconnected to sink on the residual flow graph
                 print(f'{count} augmentation performed')
                 break
-            self.print_path(parent)
+            self.print_path(d, parent)
 
             # calculate flow increase
             delta_flow = np.inf
@@ -120,7 +120,7 @@ class FlowGraph:
                 self.residual[v, u] += delta_flow # backward arc
                 v = u
 
-    def print_path(self, parent):
+    def print_path(self, d, parent):
         r"""Prints a path from source to sink.
 
         Args
@@ -133,7 +133,8 @@ class FlowGraph:
         while self.vertices[idxs[-1]]!='source':
             idxs.append(parent[idxs[-1]])
         idxs.reverse()
-        print('-->'.join([str(self.vertices[i]) for i in idxs]))
+        print('[{:g}]'.format(d[self.vertices.index('sink')])+' '\
+              +'-->'.join([str(self.vertices[i]) for i in idxs]))
 
 
 class PodMentorGraph(FlowGraph):
