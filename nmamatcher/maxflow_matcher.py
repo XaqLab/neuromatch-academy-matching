@@ -35,6 +35,7 @@ class FlowGraph:
     def __init__(self, vertices, cost, capacity):
         assert set(['source', 'sink']).issubset(set(vertices))
         N = len(set(vertices))
+        assert len(vertices)==N, 'duplicate vertices detected'
         assert cost.shape==(N, N) and capacity.shape==(N, N)
 
         self.vertices = vertices
@@ -188,7 +189,7 @@ class PodMentorGraph(FlowGraph):
             if mentor_requests['type'][r_idx]=='deactivate':
                 deact_m_idxs.append(m_idx)
             else:
-                s_idx = mentor_requests['d_idx'][r_idx]*SLOT_NUM+mentor_requests['s_idx'][r_idx]
+                s_idx = int(mentor_requests['d_idx'][r_idx]*SLOT_NUM+mentor_requests['s_idx'][r_idx])
                 if mentor_requests['type'][r_idx]=='add':
                     if m_idx in to_add:
                         to_add[m_idx].append(s_idx)
@@ -243,8 +244,10 @@ class PodMentorGraph(FlowGraph):
                                 flexes.append(mentor_info['flexibility'][m_idx])
                 # deal with requests
                 if m_idx in to_add:
-                    slots += to_add[m_idx]
-                    flexes += [1.]*len(to_add[m_idx])
+                    for s_idx in to_add[m_idx]:
+                        if s_idx not in slots:
+                            slots.append(s_idx)
+                            flexes.append(1.)
                 if m_idx in to_remove:
                     for s_idx in to_remove[m_idx]:
                         if s_idx in slots:
@@ -625,7 +628,7 @@ class PodMentorGraph(FlowGraph):
                 self.residual[v, u] += 1
 
             u, v = path[2], path[3] # pod-slot --> mentor-slot
-            self.cost[u, v] = self.affinity_min-volatility*(self.affinity_max-self.affinity_min)
+            self.cost[u, v] = self.affinity_min-(1-volatility)*(self.affinity_max-self.affinity_min)
             self.cost[v, u] = -self.cost[u, v]
             count += 1
         self.max_flow = count
