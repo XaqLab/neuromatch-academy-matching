@@ -252,6 +252,46 @@ def load_mentor_info(mentor_xlsx):
     return mentor_info
 
 
+def load_mentor_requests(request_xlsx):
+    r"""Loads mentor requests.
+
+    Args
+    ----
+    request_xlsx: str
+        The xlsx file with mentor requests.
+
+    Returns
+    -------
+    mentor_requests: dict
+        A dictionary containing mentor requests.
+
+        `'request_num'`: int
+            The number of requests.
+        `'email'`: str
+            The mentor e-mail address.
+        `'type'`: str
+            The type of each request, can be ``'deactivate'``, ``'add'`` and
+            ``'remove'``.
+        `'d_idx'`: float
+            The day index for the request, only valid when `'type'` value is
+            ``'add'`` or ``'remove'``, should be in :math:`[0, 15)`.
+        `'s_idx'`: float
+            The slot index for the request, only valid when `'type'` value is
+            ``'add'`` or ``'remove'``, should be in :math:`[0, SLOT_NUM)`.
+            Time slots specified are in UTC.
+
+    """
+    df = pandas.read_excel(request_xlsx)
+    mentor_requests = {
+        'request_num': len(df),
+        'email': [val.lower() for val in df['email'].tolist()],
+        'type': df['type'].tolist(),
+        'd_idx': df['day'].tolist(),
+        's_idx': df['slot'].tolist(),
+        }
+    return mentor_requests
+
+
 def load_student_abstracts(student_csv):
     r"""Loads student abstracts.
 

@@ -166,7 +166,7 @@ class PodMentorGraph(FlowGraph):
 
     """
     def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
-                 use_second=False, affinity=None):
+                 use_second=False, affinity=None, mentor_requests=None):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
@@ -174,6 +174,31 @@ class PodMentorGraph(FlowGraph):
         self.use_second = use_second
         if affinity is None:
             affinity = -np.ones((pod_num, mentor_num))
+        if mentor_requests is None:
+            mentor_requests = {
+                'request_num': 0,
+                'email': [], 'type': [], 'd_idx': [], 's_idx': [],
+                }
+
+        # preprocess requests
+        deact_m_idxs = []
+        to_add, to_remove = {}, {}
+        for r_idx in range(mentor_requests['request_num']):
+            m_idx = self.mentor_info['email'].index(mentor_requests['email'][r_idx])
+            if mentor_requests['type'][r_idx]=='deactivate':
+                deact_m_idxs.append(m_idx)
+            else:
+                s_idx = mentor_requests['d_idx'][r_idx]*SLOT_NUM+mentor_requests['s_idx'][r_idx]
+                if mentor_requests['type'][r_idx]=='add':
+                    if m_idx in to_add:
+                        to_add[m_idx].append(s_idx)
+                    else:
+                        to_add[m_idx] = [s_idx]
+                if mentor_requests['type'][r_idx]=='remove':
+                    if m_idx in to_remove:
+                        to_remove[m_idx].append(s_idx)
+                    else:
+                        to_remove[m_idx] = [s_idx]
 
         # prepare available slots for pods
         pod_slots = []
@@ -201,19 +226,31 @@ class PodMentorGraph(FlowGraph):
         mentor_slots, mentor_flexes = [], []
         for m_idx in range(mentor_num):
             slots, flexes = [], []
-            # only day 3-5 has potential match
-            d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5))
-            for d_idx in d_idxs:
-                for s_idx in mentor_info['primary_slots'][m_idx]:
-                    slots.append(d_idx*SLOT_NUM+s_idx)
-                    flexes.append(1.)
-            if use_second:
-                d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5))
+            if m_idx not in deact_m_idxs:
+                d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5)) # only day 3-5 has potential match
+                # add first choices
                 for d_idx in d_idxs:
-                    for s_idx in mentor_info['secondary_slots'][m_idx]:
-                        if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
-                            slots.append(d_idx*SLOT_NUM+s_idx)
-                            flexes.append(mentor_info['flexibility'][m_idx])
+                    for s_idx in mentor_info['primary_slots'][m_idx]:
+                        slots.append(d_idx*SLOT_NUM+s_idx)
+                        flexes.append(1.)
+                # add second choices
+                if use_second:
+                    d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5))
+                    for d_idx in d_idxs:
+                        for s_idx in mentor_info['secondary_slots'][m_idx]:
+                            if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
+                                slots.append(d_idx*SLOT_NUM+s_idx)
+                                flexes.append(mentor_info['flexibility'][m_idx])
+                # deal with requests
+                if m_idx in to_add:
+                    slots += to_add[m_idx]
+                    flexes += [1.]*len(to_add[m_idx])
+                if m_idx in to_remove:
+                    for s_idx in to_remove[m_idx]:
+                        if s_idx in slots:
+                            _i = slots.index(s_idx)
+                            slots.pop(_i)
+                            flexes.pop(_i)
             mentor_slots.append(slots)
             mentor_flexes.append(flexes)
 
