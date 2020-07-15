@@ -166,7 +166,7 @@ class PodMentorGraph(FlowGraph):
         option compatibility.
 
     """
-    def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
+    def __init__(self, pod_info, mentor_info, max_mentor_per_pod=1, max_pod_per_mentor=2,
                  use_second=False, affinity=None, mentor_requests=None):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
@@ -275,17 +275,19 @@ class PodMentorGraph(FlowGraph):
         u = vertices.index('source')
         for p_idx in range(pod_num):
             v = vertices.index(('pod', p_idx))
-            capacity[u, v] = 1
+            capacity[u, v] = max_mentor_per_pod
         # pod --> pod_slot
         for p_idx in range(pod_num):
             u = vertices.index(('pod', p_idx))
             for s_idx in pod_slots[p_idx]:
                 v = vertices.index(('pod-slot', p_idx, s_idx))
-                capacity[u, v] = 1
+                capacity[u, v] = max_mentor_per_pod
         # pod-slot --> mentor-slot
         self.affinity_min, self.affinity_max = np.inf, -np.inf
+        self.shared_slots = np.zeros((pod_num, mentor_num), np.object)
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
+                self.shared_slots[p_idx, m_idx] = []
                 for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
                     u = vertices.index(('pod-slot', p_idx, s_idx))
                     v = vertices.index(('mentor-slot', m_idx, s_idx))
@@ -297,6 +299,7 @@ class PodMentorGraph(FlowGraph):
                         self.affinity_min = cost[u, v]
                     if cost[u, v]>self.affinity_max:
                         self.affinity_max = cost[u, v]
+                    self.shared_slots[p_idx, m_idx].append((s_idx, u, v))
         # mentor-slot --> mentor
         for m_idx in range(mentor_num):
             v = vertices.index(('mentor', m_idx))
@@ -313,8 +316,8 @@ class PodMentorGraph(FlowGraph):
 
         super(PodMentorGraph, self).__init__(vertices, cost, capacity)
         print('\npod-mentor graph initialized')
-        print('{} pods, {} mentors, max {} pod(s) per mentor'.format(
-            pod_num, mentor_num, max_pod_per_mentor
+        print('{} pods, {} mentors, max {} mentor(s) per pod, max {} pod(s) per mentor'.format(
+            pod_num, mentor_num, max_mentor_per_pod, max_pod_per_mentor
             ))
 
     @staticmethod
@@ -372,20 +375,12 @@ class PodMentorGraph(FlowGraph):
 
         matches = []
         for p_idx in range(self.pod_num):
-            u = self.vertices.index(('pod', p_idx))
-            vs, = (flow[u]>0).nonzero()
-            if vs.size==1:
-                u = vs[0]
-                vs, = (flow[u]>0).nonzero()
-                assert vs.size==1
-                _, m_idx, s_idx = self.vertices[vs[0]]
-                matches.append(
-                    (s_idx, self.pod_info['name'][p_idx], self.mentor_info['email'][m_idx])
-                    )
-            elif vs.size>1:
-                raise RuntimeError('more than one outward flow detected for pod {}'.format(
-                    self.pod_info['name'][p_idx]
-                    ))
+            for m_idx in range(self.mentor_num):
+                for s_idx, u, v in self.shared_slots[p_idx, m_idx]:
+                    if flow[u, v]>0:
+                        matches.append(
+                            (s_idx, self.pod_info['name'][p_idx], self.mentor_info['email'][m_idx])
+                            )
         return matches
 
     def export_pod_schedule(self, r_id, matches=None, update_flow=True):
@@ -407,13 +402,12 @@ class PodMentorGraph(FlowGraph):
         if matches is None:
             matches = self.get_matches(update_flow)
 
-        assert len(set([p for _, p, _ in matches]))==len(matches) # no duplicate pod
-        matched = np.zeros((self.pod_num,), np.bool)
-        out_strs = []
+        matched = np.zeros((self.pod_num,), np.float)
+        p_strs = {}
         for s_idx, pod_name, mentor_email in matches:
             if pod_name in self.pod_info['name']:
                 p_idx = self.pod_info['name'].index(pod_name)
-                matched[p_idx] = True
+                matched[p_idx] += 1
             else:
                 p_idx = None
             if mentor_email in self.mentor_info['email']:
@@ -425,7 +419,9 @@ class PodMentorGraph(FlowGraph):
             d_idx = s_idx//SLOT_NUM
             s_idx = s_idx%SLOT_NUM
 
-            out_strs.append('{},{},{},{},{},{},\n'.format(
+            if pod_name not in p_strs:
+                p_strs[pod_name] = []
+            p_strs[pod_name].append('{},{},{},{},{},{},\n'.format(
                 pod_name, 'N/A' if p_idx is None else self.pod_info['tz_group'][p_idx],
                 self._get_day_str(d_idx), self._get_slot_str(s_idx),
                 'N/A' if m_idx is None else ' '.join([
@@ -434,16 +430,24 @@ class PodMentorGraph(FlowGraph):
                     ]),
                 mentor_email,
                 ))
+        out_strs = []
+        for pod_name in sorted(p_strs):
+            out_strs += sorted(p_strs[pod_name])
 
         with open(f'pod.schedule_{r_id}.csv', 'w') as f:
             f.write('pod,pod time zone group,day (utc+1),slot (utc+1),mentor,mentor e-mail,zoom link\n')
             for out_str in sorted(out_strs):
                 f.write(out_str)
-        print('\n{}/{} pods assigned with a mentor'.format(matched.sum(), self.pod_num))
-        print('hanging pods:')
-        for p_idx in range(self.pod_num):
-            if not matched[p_idx]:
-                print(self.pod_info['name'][p_idx])
+        print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
+        print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
+        if np.any(matched==0):
+            print('hanging pods:')
+            for p_idx in range(self.pod_num):
+                if not matched[p_idx]:
+                    print(self.pod_info['name'][p_idx])
+            return False
+        else:
+            return True
 
     def export_mentor_schedule(self, r_id, matches=None, update_flow=True):
         r"""Exports mentor schedule CSV file.
@@ -628,7 +632,7 @@ class PodMentorGraph(FlowGraph):
                 self.residual[v, u] += 1
 
             u, v = path[2], path[3] # pod-slot --> mentor-slot
-            self.cost[u, v] = self.affinity_min-(1-volatility)*(self.affinity_max-self.affinity_min)
+            self.cost[u, v] = self.affinity_min+(volatility-0.8)*(self.affinity_max-self.affinity_min)
             self.cost[v, u] = -self.cost[u, v]
             count += 1
         self.max_flow = count

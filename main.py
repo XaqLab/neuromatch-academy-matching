@@ -30,8 +30,8 @@ if __name__=='__main__':
     if args.affinity_type=='dataset':
         affinity = pod_mentor_dset_affinity(pod_info, mentor_info)
 
-    pmg = PodMentorGraph(pod_info, mentor_info, max_mentor_per_pod=3, max_pod_per_mentor=3,
-                         mentor_requests=mentor_requests)
+    pmg = PodMentorGraph(pod_info, mentor_info, max_mentor_per_pod=1, max_pod_per_mentor=3,
+                         mentor_requests=mentor_requests, affinity=affinity)
     pmg.load_matches(pmg.read_schedule('C56E_formatted', 'mentor'), volatility=1.)
     r_id = random_id()
     tic = time.time()
