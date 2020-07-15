@@ -166,7 +166,7 @@ class PodMentorGraph(FlowGraph):
 
     """
     def __init__(self, pod_info, mentor_info, max_pod_per_mentor=2,
-                 use_second=False, affinity=None, special_list=None):
+                 use_second=False, affinity=None):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
@@ -174,8 +174,6 @@ class PodMentorGraph(FlowGraph):
         self.use_second = use_second
         if affinity is None:
             affinity = -np.ones((pod_num, mentor_num))
-        if special_list is None:
-            special_list = {}
 
         # prepare available slots for pods
         pod_slots = []
@@ -205,8 +203,6 @@ class PodMentorGraph(FlowGraph):
             slots, flexes = [], []
             # only day 3-5 has potential match
             d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5))
-            if mentor_info['email'][m_idx] in special_list:
-                d_idxs = special_list[mentor_info['email'][m_idx]]
             for d_idx in d_idxs:
                 for s_idx in mentor_info['primary_slots'][m_idx]:
                     slots.append(d_idx*SLOT_NUM+s_idx)
@@ -276,6 +272,10 @@ class PodMentorGraph(FlowGraph):
             capacity[u, v] = max_pod_per_mentor
 
         super(PodMentorGraph, self).__init__(vertices, cost, capacity)
+        print('\npod-mentor graph initialized')
+        print('{} pods, {} mentors, max {} pod(s) per mentor'.format(
+            pod_num, mentor_num, max_pod_per_mentor
+            ))
 
     @staticmethod
     def _get_day_str(d_idx):
@@ -302,7 +302,7 @@ class PodMentorGraph(FlowGraph):
             h_label = ' AM' if h_idx<SLOT_NUM/2 or h_idx==SLOT_NUM else ' PM'
             h_idx %= SLOT_NUM/2
             h_label = '{:d}:{:02d}'.format(
-                int(((h_idx//2)-1)%SLOT_NUM+1), int((h_idx%2)*30),
+                int(((h_idx//2)-1)%12+1), int((h_idx%2)*30),
                 )+h_label
             return h_label
         slot_str = '{} - {}'.format(
@@ -347,87 +347,6 @@ class PodMentorGraph(FlowGraph):
                     self.pod_info['name'][p_idx]
                     ))
         return matches
-
-    def load_mentor_schedule(self, mentor_csv, rigidity=50):
-        r"""Loads from an old mentor schedule CSV file.
-
-        Args
-        ----
-        mentor_csv: str
-            The old CSV file, with head adjusted to current export format.
-
-        """
-        self.residual = self.capacity.copy()
-        print(f'\nflow reset, loading from {mentor_csv}...')
-
-        df = pandas.read_csv(mentor_csv)
-        count, total = 0, 0
-        for idx in np.random.permutation(len(df)): # randomly avoid conflicts
-            if isinstance(df['pod'][idx], str):
-                total += 1
-            else:
-                continue
-
-            if not df['email'][idx] in self.mentor_info['email']:
-                print('{} not found in mentor emails'.format(df['email'][idx]))
-                continue
-            else:
-                m_idx = self.mentor_info['email'].index(df['email'][idx])
-
-            if df['day (utc+1)'][idx]=='Wednesday':
-                d_idx = 2
-            elif df['day (utc+1)'][idx]=='Thursday':
-                d_idx = 3
-            elif df['day (utc+1)'][idx]=='Friday':
-                d_idx = 4
-
-            slot_str = df['slot (utc+1)'][idx]
-            if slot_str.index(':')==1:
-                slot_str = ' '+slot_str
-            s_idx = [self._get_slot_str(i) for i in range(48)].index(slot_str)
-            s_idx = d_idx*SLOT_NUM+s_idx-2
-
-            if not df['pod'][idx] in self.pod_info['name']:
-                print('{} not found in pod names'.format(df['pod'][idx]))
-                continue
-            else:
-                p_idx = self.pod_info['name'].index(df['pod'][idx])
-
-            path, is_closed = [], False
-            for u in ['source', ('pod', p_idx), ('pod-slot', p_idx, s_idx),
-                      ('mentor-slot', m_idx, s_idx), ('mentor', m_idx), 'sink']:
-                if u in self.vertices:
-                    path.append(self.vertices.index(u))
-                else:
-                    is_closed = True
-            if is_closed:
-                print('invalid match: (day {}, slot {}, {}, {})'.format(
-                    s_idx//48, s_idx%48, df['pod'][idx], df['email'][idx],
-                    ))
-                continue
-
-            for u, v in zip(path[:-1], path[1:]):
-                if self.residual[u, v]<=0:
-                    is_closed = True
-            if is_closed:
-                print('invalid match: (day {}, slot {}, {}, {})'.format(
-                    s_idx//48, s_idx%48, df['pod'][idx], df['email'][idx],
-                    ))
-                continue
-
-            for u, v in zip(path[:-1], path[1:]):
-                self.residual[u, v] -= 1
-                self.residual[v, u] += 1
-
-            u, v = path[2], path[3]
-            self.cost[u, v] = self.affinity_min-rigidity
-            self.cost[v, u] = -self.cost[u, v]
-            u, v = path[3], path[4]
-            self.cost[u, v] = self.affinity_min-rigidity
-            self.cost[v, u] = -self.cost[u, v]
-
-            count += 1
-        print(f'{count}/{total} matches loaded')
 
     def export_pod_schedule(self, r_id, matches=None, update_flow=True):
         r"""Exports pod schedule CSV file.
@@ -564,7 +483,7 @@ class PodMentorGraph(FlowGraph):
             for out_str in sorted(out_strs):
                 f.write(out_str)
         print('\n{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
-        print('{:.2%} usage for the busy mentors'.format((usage/limit)[usage>0].mean()))
+        print('{:.2%} usage for the busy mentors'.format((usage/(limit+1e-8))[usage>0].mean()))
         print('idle mentors:')
         for m_idx in range(self.mentor_num):
             if usage[m_idx]==0:
@@ -573,6 +492,107 @@ class PodMentorGraph(FlowGraph):
                     self.mentor_info['last_name'][m_idx]+',',
                     '('+self.mentor_info['email'][m_idx]+')'
                     ]))
+
+    @classmethod
+    def read_schedule(cls, r_id, csv_type='pod'):
+        r"""Exports mentor schedule CSV file.
+
+        Args
+        ----
+        r_id: str
+            The random ID for identifying output files.
+
+        Returns
+        -------
+        matches: list
+            A list of tuples as `(s_idx, pod_name, mentor_email)`.
+
+        """
+        assert csv_type in ['pod', 'mentor']
+        df = pandas.read_csv(f'{csv_type}.schedule_{r_id}.csv')
+        day_strs = [cls._get_day_str(d_idx) for d_idx in range(2, 5)]
+        slot_strs = [cls._get_slot_str(s_idx) for s_idx in range(SLOT_NUM)]
+        matches = []
+        for i in range(len(df)):
+            day_str = df['day (utc+1)'][i]
+            slot_str = df['slot (utc+1)'][i]
+            pod_name = df['pod'][i]
+            if csv_type=='pod':
+                mentor_email = df['mentor e-mail'][i]
+            if csv_type=='mentor':
+                mentor_email = df['email'][i]
+
+            d_idx = day_strs.index(day_str)+2
+            s_idx = slot_strs.index(slot_str)
+            s_idx = d_idx*SLOT_NUM+s_idx-2
+            matches.append((s_idx, pod_name, mentor_email))
+        return matches
+
+    def load_matches(self, matches, volatility=0):
+        r"""Loads existing matches to the flow graph.
+
+        After resetting the flow, matches are randomly selected and attempted
+        to add on to the flow graph. If a match is feasible, the cost along
+        path of this match is decreased, so that later flow update will favor
+        this path.
+
+        Args
+        ----
+        matches: list
+            A list of tuples as `(s_idx, pod_name, mentor_email)`.
+        volatility: float
+            A number controls how volatile the loaded match is. Higher value
+            means more difficulty to shift the flow.
+
+        """
+        self.residual = self.capacity.copy()
+        print('\nflow reset before loading the matches')
+
+        count = 0
+        for s_idx, pod_name, mentor_email in matches:
+            if pod_name in self.pod_info['name']:
+                p_idx = self.pod_info['name'].index(pod_name)
+            else:
+                print(f'{pod_name} not found in pod names')
+                continue
+            if mentor_email in self.mentor_info['email']:
+                m_idx = self.mentor_info['email'].index(mentor_email)
+            else:
+                print(f'{mentor_email} not found in mentor e-mail addresses')
+                continue
+
+            path, is_closed = [], False
+            for u_label in ['source', ('pod', p_idx), ('pod-slot', p_idx, s_idx),
+                      ('mentor-slot', m_idx, s_idx), ('mentor', m_idx), 'sink']:
+                if u_label in self.vertices:
+                    path.append(self.vertices.index(u_label))
+                else:
+                    is_closed = True
+            if is_closed:
+                print('invalid match: ({}, {}, {})'.format(
+                    s_idx, pod_name, mentor_email
+                    ))
+                continue
+
+            for u, v in zip(path[:-1], path[1:]):
+                if self.residual[u, v]<=0:
+                    is_closed = True
+            if is_closed:
+                print('overflow match: ({}, {}, {})'.format(
+                    s_idx, pod_name, mentor_email
+                    ))
+                continue
+
+            for u, v in zip(path[:-1], path[1:]):
+                self.residual[u, v] -= 1
+                self.residual[v, u] += 1
+
+            u, v = path[2], path[3] # pod-slot --> mentor-slot
+            self.cost[u, v] = self.affinity_min-volatility*(self.affinity_max-self.affinity_min)
+            self.cost[v, u] = -self.cost[u, v]
+            count += 1
+        self.max_flow = count
+        print('{}/{} matches loaded'.format(count, len(matches)))
 
 
 def pod_mentor_topic_affinity(pod_info, mentor_info, student_abstracts,
