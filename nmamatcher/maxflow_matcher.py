@@ -188,7 +188,10 @@ class PodMentorGraph(FlowGraph):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
-        self.max_pod_per_mentor = max_pod_per_mentor
+        self.min_mpp = min_mentor_per_pod
+        self.max_mpp = max_mentor_per_pod
+        self.min_ppm = min_pod_per_mentor
+        self.max_ppm = max_pod_per_mentor
         self.use_second = use_second
         if affinity is None:
             affinity = np.ones((pod_num, mentor_num))
@@ -316,7 +319,6 @@ class PodMentorGraph(FlowGraph):
             for s_idx in mentor_slots[m_idx]:
                 vertices.append(('mentor-slot', m_idx, s_idx))
             vertices.append(('mentor', m_idx))
-        # vertices += ['_source', '_sink'] # '_source' and '_sink' added for max flow with lower bound
 
         # define edge cost and capacity in sparse matrices
         cost = dok_matrix((len(vertices), len(vertices)))
@@ -326,16 +328,15 @@ class PodMentorGraph(FlowGraph):
         u = vertices.index('source')
         for p_idx in range(pod_num):
             v = vertices.index(('pod', p_idx))
+            lower_bound[u, v] = min_mentor_per_pod
             upper_bound[u, v] = max_mentor_per_pod
         # pod --> pod_slot
         for p_idx in range(pod_num):
             u = vertices.index(('pod', p_idx))
             for s_idx in pod_slots[p_idx]:
                 v = vertices.index(('pod-slot', p_idx, s_idx))
-                lower_bound[u, v] = min_mentor_per_pod
                 upper_bound[u, v] = max_mentor_per_pod
         # pod-slot --> mentor-slot
-        self.affinity_min, self.affinity_max = np.inf, -np.inf
         self.shared_slots = np.zeros((pod_num, mentor_num), np.object)
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
@@ -343,14 +344,10 @@ class PodMentorGraph(FlowGraph):
                 for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
                     u = vertices.index(('pod-slot', p_idx, s_idx))
                     v = vertices.index(('mentor-slot', m_idx, s_idx))
-                    cost[u, v] = int(100*(1-affinity[p_idx, m_idx])) # use int to avoid numerical negative cycle
+                    cost[u, v] = int(100*(2-affinity[p_idx, m_idx])) # use int to avoid numerical negative cycle
                     cost[v, u] = -cost[u, v]
                     upper_bound[u, v] = 1
 
-                    if cost[u, v]<self.affinity_min:
-                        self.affinity_min = cost[u, v]
-                    if cost[u, v]>self.affinity_max:
-                        self.affinity_max = cost[u, v]
                     self.shared_slots[p_idx, m_idx].append((s_idx, u, v))
         # mentor-slot --> mentor
         for m_idx in range(mentor_num):
@@ -369,27 +366,23 @@ class PodMentorGraph(FlowGraph):
 
         # add fixed matches
         for s_idx, pod_name, mentor_email in fixed_matches:
+            if not (pod_name in pod_info['name'] and mentor_email in mentor_info['email']):
+                continue
             p_idx = pod_info['name'].index(pod_name)
             m_idx = mentor_info['email'].index(mentor_email)
-            path = [vertices.index(u_label) for u_label in \
-                    ['source', ('pod', p_idx), ('pod-slot', p_idx, s_idx),
-                     ('mentor-slot', m_idx, s_idx), ('mentor', m_idx), 'sink']]
-            for u, v in zip(path[:-1], path[1:]):
-                lower_bound[u, v] += 1
-                if lower_bound[u, v]>upper_bound[u, v]:
-                    # fixed matches inconsistent with current constraint, need
-                    # to relax upper limit
-                    upper_bound[u, v] = lower_bound[u, v]
+            u = vertices.index(('pod-slot', p_idx, s_idx))
+            v = vertices.index(('mentor-slot', m_idx, s_idx))
+            lower_bound[u, v] = 1
 
+        self.lower_bound, self.upper_bound = lower_bound, upper_bound
         super(PodMentorGraph, self).__init__(vertices, cost, upper_bound-lower_bound)
-        self.residual = self._get_initial_flow(vertices, upper_bound, lower_bound)
         print('\npod-mentor graph initialized')
         print('{} pods, {} mentors, max {} mentor(s) per pod, max {} pod(s) per mentor'.format(
             pod_num, mentor_num, max_mentor_per_pod, max_pod_per_mentor
             ))
 
     @staticmethod
-    def _get_initial_flow(vertices, upper_bound, lower_bound):
+    def _get_initial_flow(vertices, lower_bound, upper_bound):
         N = len(vertices)
         _vertices = vertices+['_source', '_sink']
         s, t = _vertices.index('_source'), _vertices.index('_sink')
@@ -417,6 +410,39 @@ class PodMentorGraph(FlowGraph):
         residual[s, t] = 0
         residual[t, s] = 0
         return residual
+
+    def get_flow(self):
+        N = len(self.vertices)
+        _vertices = self.vertices+['_source', '_sink']
+        s, t = _vertices.index('_source'), _vertices.index('_sink')
+        cost, capacity = dok_matrix((N+2, N+2)), dok_matrix((N+2, N+2))
+
+        cost[:N, :N] = self.cost
+        capacity[:N, :N] = self.upper_bound-self.lower_bound
+        # _source to main vertices
+        l_in = self.lower_bound.toarray().sum(axis=0)
+        us, = l_in.nonzero()
+        for u in us:
+            capacity[s, u] = l_in[u]
+        # main vertices to _sink
+        l_out = self.lower_bound.toarray().sum(axis=1)
+        us, = l_out.nonzero()
+        for u in us:
+            capacity[u, t] = l_out[u]
+        # sink to source
+        infinite_flow = self.upper_bound.toarray().sum()
+        capacity[_vertices.index('sink'), _vertices.index('source')] = infinite_flow
+
+        aux_fg = FlowGraph(_vertices, dok_matrix((N+2, N+2)), capacity, True)
+        aux_fg.FordFulkerson()
+        self.residual = aux_fg.residual[:N, :N]
+        s, t = self.vertices.index('source'), self.vertices.index('sink')
+        self.residual[s, t] = 0
+        self.residual[t, s] = 0
+
+        self.FordFulkerson()
+        flow = (self.capacity-self.residual).toarray()
+        return flow
 
     @staticmethod
     def _get_day_str(d_idx, abb=False):
@@ -459,7 +485,7 @@ class PodMentorGraph(FlowGraph):
             )+slot_str
         return slot_str
 
-    def get_matches(self, update_flow=True):
+    def get_matches(self):
         r"""Returns pod-mentor matches.
 
         Args
@@ -475,11 +501,9 @@ class PodMentorGraph(FlowGraph):
             index (with day index encoded), pod name and mentor e-mail address.
 
         """
-        if update_flow:
-            self.FordFulkerson()
-        flow = (self.capacity-self.residual).toarray()
+        flow = self.get_flow()
 
-        matches = self.fixed_matches
+        matches = self.fixed_matches.copy()
         for p_idx in range(self.pod_num):
             for m_idx in range(self.mentor_num):
                 for s_idx, u, v in self.shared_slots[p_idx, m_idx]:
@@ -756,7 +780,7 @@ class PodMentorGraph(FlowGraph):
                 matches_future.append((s_idx, pod_name, mentor_email))
         return matches_past, matches_future
 
-    def load_matches(self, matches, volatility=0):
+    def mark_matches(self, matches, cost_change=100):
         r"""Loads existing matches to the flow graph.
 
         After resetting the flow, matches are randomly selected and attempted
@@ -773,10 +797,6 @@ class PodMentorGraph(FlowGraph):
             means more difficulty to shift the flow.
 
         """
-        self.residual = self.capacity.copy()
-        print('\nflow reset before loading the matches')
-
-        count = 0
         for s_idx, pod_name, mentor_email in matches:
             if pod_name in self.pod_info['name']:
                 p_idx = self.pod_info['name'].index(pod_name)
@@ -789,39 +809,10 @@ class PodMentorGraph(FlowGraph):
                 print(f'{mentor_email} not found in mentor e-mail addresses')
                 continue
 
-            path, is_closed = [], False
-            for u_label in ['source', ('pod', p_idx), ('pod-slot', p_idx, s_idx),
-                      ('mentor-slot', m_idx, s_idx), ('mentor', m_idx), 'sink']:
-                if u_label in self.vertices:
-                    path.append(self.vertices.index(u_label))
-                else:
-                    is_closed = True
-            if is_closed:
-                print('invalid match: ({}, {}, {})'.format(
-                    s_idx, pod_name, mentor_email
-                    ))
-                continue
-
-            for u, v in zip(path[:-1], path[1:]):
-                if self.residual[u, v]<=0:
-                    is_closed = True
-            if is_closed:
-                print('overflow match: ({}, {}, {})'.format(
-                    s_idx, pod_name, mentor_email
-                    ))
-                continue
-
-            for u, v in zip(path[:-1], path[1:]):
-                self.residual[u, v] -= 1
-                self.residual[v, u] += 1
-
-            u, v = path[2], path[3] # pod-slot --> mentor-slot
-            self.cost[u, v] = self.affinity_min+int((volatility-0.8)*(self.affinity_max-self.affinity_min+1))
+            u = self.vertices.index(('pod-slot', p_idx, s_idx))
+            v = self.vertices.index(('mentor-slot', m_idx, s_idx))
+            self.cost[u, v] -= cost_change
             self.cost[v, u] = -self.cost[u, v]
-            count += 1
-        # self.max_flow = count
-        self.residual = self.capacity.copy()
-        print('{}/{} matches loaded'.format(count, len(matches)))
 
 
 def pod_mentor_topic_affinity(pod_info, mentor_info, student_abstracts,
