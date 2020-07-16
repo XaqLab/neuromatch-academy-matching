@@ -200,7 +200,7 @@ class PodMentorGraph(FlowGraph):
                  min_mentor_per_pod=0, max_mentor_per_pod=1,
                  min_pod_per_mentor=0, max_pod_per_mentor=2,
                  use_second=False, affinity=None, fixed_matches=None,
-                 mentor_requests=None, now_idx=0):
+                 mentor_requests=None, now_idx=0, stage=1):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
@@ -219,6 +219,7 @@ class PodMentorGraph(FlowGraph):
                 'request_num': 0,
                 'email': [], 'type': [], 'd_idx': [], 's_idx': [],
                 }
+        self.stage = stage
 
         # preprocess requests
         to_deact = []
@@ -245,40 +246,83 @@ class PodMentorGraph(FlowGraph):
         for p_idx, tz_group in enumerate(pod_info['tz_group']):
             slots = [] # each element is d_idx*SLOT_NUM+s_idx
             # deal with different tracks differently, so that valid slots are in the right gap
-            if tz_group[-1]=='B':
-                for s_idx in GROUP_SLOTS[tz_group[0]+'B+']:
-                    slots.append(2*SLOT_NUM+s_idx) # second half of day 3
-                for s_idx in GROUP_SLOTS[tz_group[0]+'B-']:
-                    slots.append(4*SLOT_NUM+s_idx) # first half of day 5
-                for s_idx in GROUP_SLOTS[tz_group]:
-                    slots.append(3*SLOT_NUM+s_idx) # both halves of day 4
-            elif tz_group[-1]=='A':
-                for s_idx in GROUP_SLOTS[tz_group]: # day 4 and 5
-                    slots.append(3*SLOT_NUM+s_idx)
-                    slots.append(4*SLOT_NUM+s_idx)
-            elif tz_group[-1]=='C':
-                for s_idx in GROUP_SLOTS[tz_group]: # day 3 and 4
-                    slots.append(2*SLOT_NUM+s_idx)
-                    slots.append(3*SLOT_NUM+s_idx)
+            if stage==1:
+                if tz_group[-1]=='B':
+                    for s_idx in GROUP_SLOTS[tz_group[0]+'B+']:
+                        slots.append(2*SLOT_NUM+s_idx) # second half of day 3
+                    for s_idx in GROUP_SLOTS[tz_group[0]+'B-']:
+                        slots.append(4*SLOT_NUM+s_idx) # first half of day 5
+                    for s_idx in GROUP_SLOTS[tz_group]:
+                        slots.append(3*SLOT_NUM+s_idx) # both halves of day 4
+                elif tz_group[-1]=='A':
+                    for s_idx in GROUP_SLOTS[tz_group]: # day 4 and 5
+                        slots.append(3*SLOT_NUM+s_idx)
+                        slots.append(4*SLOT_NUM+s_idx)
+                elif tz_group[-1]=='C':
+                    for s_idx in GROUP_SLOTS[tz_group]: # day 3 and 4
+                        slots.append(2*SLOT_NUM+s_idx)
+                        slots.append(3*SLOT_NUM+s_idx)
+            if stage==2:
+                if tz_group[-1]=='B':
+                    for d_idx in [5, 10]: # second half of day 1
+                        for s_idx in GROUP_SLOTS[tz_group[0]+'B+']:
+                            slots.append(d_idx*SLOT_NUM+s_idx)
+                    for d_idx in [9, 14]: # first half of day 5
+                        for s_idx in GROUP_SLOTS[tz_group[0]+'B-']:
+                            slots.append(d_idx*SLOT_NUM+s_idx)
+                    for d_idx in [6, 7, 8, 11, 12, 13]:
+                        for s_idx in GROUP_SLOTS[tz_group]:
+                            slots.append(d_idx*SLOT_NUM+s_idx)
+                elif tz_group[-1]=='A':
+                    for d_idx in [6, 7, 8, 9, 11, 12, 13, 14]: # day 2-5
+                        for s_idx in GROUP_SLOTS[tz_group]:
+                            slots.append(d_idx*SLOT_NUM+s_idx)
+                elif tz_group[-1]=='C':
+                    for d_idx in [5, 6, 7, 8, 10, 11, 12, 13]: # day 1-4
+                        for s_idx in GROUP_SLOTS[tz_group]:
+                            slots.append(d_idx*SLOT_NUM+s_idx)
             slots = [s for s in slots if s>=now_idx]
             pod_slots.append(slots)
 
         # prepare available slots for mentors, along with choice flexibility
+        def refine(s_idxs): # select only odd or even slots so that it represents an 1-hour session
+            idxs_odd, idxs_even = [], []
+            for s_idx in s_idxs:
+                if s_idx%2==1:
+                    idxs_odd.append(s_idx)
+                else:
+                    idxs_even.append(s_idx)
+            if len(idxs_odd)>len(idxs_even):
+                return idxs_odd
+            else:
+                return idxs_even
         mentor_slots, mentor_flexes = [], []
+        if stage==1:
+            valid_d_idxs = range(2, 5) # only day 3-5 has potential match
+        if stage==2:
+            valid_d_idxs = range(5, 15)
         for m_idx in range(mentor_num):
             slots, flexes = [], []
             if m_idx not in to_deact:
-                d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5)) # only day 3-5 has potential match
+                d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], valid_d_idxs)
                 # add first choices
                 for d_idx in d_idxs:
-                    for s_idx in mentor_info['primary_slots'][m_idx]:
+                    if stage==1:
+                        s_idxs = mentor_info['primary_slots'][m_idx]
+                    if stage==2:
+                        s_idxs = refine(mentor_info['primary_slots'][m_idx])
+                    for s_idx in s_idxs:
                         slots.append(d_idx*SLOT_NUM+s_idx)
                         flexes.append(1.)
                 # add second choices
                 if use_second:
-                    d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5))
+                    d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], valid_d_idxs)
                     for d_idx in d_idxs:
-                        for s_idx in mentor_info['secondary_slots'][m_idx]:
+                        if stage==1:
+                            s_idxs = mentor_info['secondary_slots'][m_idx]
+                        if stage==2:
+                            s_idxs = refine(mentor_info['secondary_slots'][m_idx])
+                        for s_idx in s_idxs:
                             if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
                                 slots.append(d_idx*SLOT_NUM+s_idx)
                                 flexes.append(mentor_info['flexibility'][m_idx])
@@ -389,22 +433,24 @@ class PodMentorGraph(FlowGraph):
             pod_num, mentor_num, max_mentor_per_pod, max_pod_per_mentor
             ))
 
-    @staticmethod
-    def _get_day_str(d_idx, abb=False):
-        if abb:
-            if d_idx==2:
-                day_str = 'WED'
-            elif d_idx==3:
-                day_str = 'THU'
-            elif d_idx==4:
-                day_str = 'FRI'
-        else:
-            if d_idx==2:
-                day_str = 'Wednesday'
-            elif d_idx==3:
-                day_str = 'Thursday'
-            elif d_idx==4:
-                day_str = 'Friday'
+    def _get_day_str(self, d_idx, abb=False):
+        if self.stage==1:
+            if abb:
+                if d_idx==2:
+                    day_str = 'WED'
+                elif d_idx==3:
+                    day_str = 'THU'
+                elif d_idx==4:
+                    day_str = 'FRI'
+            else:
+                if d_idx==2:
+                    day_str = 'Wednesday'
+                elif d_idx==3:
+                    day_str = 'Thursday'
+                elif d_idx==4:
+                    day_str = 'Friday'
+        if self.stage==2:
+            return 'DAY {:02d}'.format(d_idx+1)
         return day_str
 
     @staticmethod
@@ -467,6 +513,8 @@ class PodMentorGraph(FlowGraph):
         # auxiliary graph
         aux_fg = FlowGraph(_vertices, cost, capacity, True)
         aux_fg.FordFulkerson()
+        assert aux_fg.residual[s].toarray().sum()==0, 'feasible flow within bounds not found'
+
         self.residual = aux_fg.residual[:N, :N]
         s, t = self.vertices.index('source'), self.vertices.index('sink')
         self.residual[s, t] = 0

@@ -97,6 +97,21 @@ def load_pod_info(pod_csv):
     return pod_info
 
 
+def create_fake_group(pod_info, max_group_size=5):
+    group_info = {
+        'name': [],
+        'tz_group': [],
+        'dset_option': [],
+        }
+    for p_idx in range(pod_info['pod_num']):
+        g_size = (len(pod_info['student_emails'][p_idx])-1)//max_group_size+1
+        for g_idx in range(g_size):
+            group_info['name'].append(pod_info['name'][p_idx]+'_{}'.format(g_idx))
+            group_info['tz_group'].append(pod_info['tz_group'][p_idx])
+            group_info['dset_option'].append(pod_info['dset_option'][p_idx])
+    group_info['pod_num'] = len(group_info['name']) # use pod keys
+    return group_info
+
 def load_mentor_info(mentor_xlsx):
     r"""Loads mentor information.
 
