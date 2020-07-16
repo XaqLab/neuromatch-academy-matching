@@ -43,7 +43,7 @@ if __name__=='__main__':
     tic = time.time()
     matches = pmg.get_matches()
     toc = time.time()
-    print('{:d} min {:f} secs elapsed'.format(int((toc-tic)//60), (toc-tic)%60))
+    print('{:d} min {:.1f} secs elapsed'.format(int((toc-tic)//60), (toc-tic)%60))
     r_id = random_id()
     pmg.export_pod_schedule(r_id, matches)
     pmg.export_mentor_schedule(r_id, matches)
