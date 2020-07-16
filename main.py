@@ -30,15 +30,26 @@ if __name__=='__main__':
     if args.affinity_type=='dataset':
         affinity = pod_mentor_dset_affinity(pod_info, mentor_info)
 
+    print('initializing graph model...')
+
+    # reschedule based on old schedule, comment it out if you want to match
+    # from scratch
     now_idx = 138 # day 3 slot 42, Wed 21:00 UTC
     old_id = 'C56E'
     old_matches_past, old_matches_future = PodMentorGraph.read_schedule(old_id, now_idx=now_idx)
-
-    print('initializing graph model...')
-    pmg = PodMentorGraph(pod_info, mentor_info, mentor_requests=mentor_requests, fixed_matches=old_matches_past,
+    pmg = PodMentorGraph(pod_info, mentor_info,
                          min_mentor_per_pod=1, max_mentor_per_pod=3,
-                         min_pod_per_mentor=0, max_pod_per_mentor=3)
+                         min_pod_per_mentor=0, max_pod_per_mentor=3,
+                         mentor_requests=mentor_requests,
+                         fixed_matches=old_matches_past, now_idx=now_idx)
     pmg.mark_matches(old_matches_future)
+
+    # # match pod and mentor from scratch, comment it out if you want to modify
+    # # an existing schedule
+    # pmg = PodMentorGraph(pod_info, mentor_info,
+    #                      min_mentor_per_pod=1, max_mentor_per_pod=3,
+    #                      min_pod_per_mentor=0, max_pod_per_mentor=3,
+    #                      mentor_requests=mentor_requests)
 
     tic = time.time()
     matches = pmg.get_matches()
