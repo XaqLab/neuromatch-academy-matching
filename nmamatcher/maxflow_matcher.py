@@ -547,7 +547,7 @@ class PodMentorGraph(FlowGraph):
                 p_matches[pod_name] = []
             p_matches[pod_name].append((s_idx, m_idx))
 
-        print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
+        print('{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
         print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
         if print_hanging and np.any(matched==0):
             print('hanging pods:')
@@ -596,7 +596,7 @@ class PodMentorGraph(FlowGraph):
                 m_matches[mentor_email] = []
             m_matches[mentor_email].append((s_idx, p_idx))
 
-        print('\n{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
+        print('{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
         print('{:.2%} usage for the busy mentors'.format((usage/(limit+1e-8))[usage>0].mean()))
         if print_idle and np.any(np.logical_and(usage==0, limit>0)):
             print('idle mentors:')
@@ -803,7 +803,10 @@ class PodMentorGraph(FlowGraph):
                 self.pod_info['name'][p_idx],
                 )
 
+        print('\npreview of old and new matches')
+        print('[old]:')
         m_matches_old = self.get_mentor_centered_view(matches_old)
+        print('[new]:')
         m_matches_new = self.get_mentor_centered_view(matches_new)
         with open(f'change.log_{c_id}.txt', 'w') as f:
             f.write('Change Log\n')

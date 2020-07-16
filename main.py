@@ -57,6 +57,6 @@ if __name__=='__main__':
     print('{:d} min {:.1f} secs elapsed'.format(int((toc-tic)//60), (toc-tic)%60))
     r_id = random_id()
     pmg.export_pod_schedule(r_id, matches)
-    pmg.export_mentor_schedule(r_id, matches)
+    pmg.export_mentor_schedule(r_id, matches, print_idle=False)
     pmg.export_changelog(old_id+'-'+r_id, old_matches_past+old_matches_future,
                          matches)
