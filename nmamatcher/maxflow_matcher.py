@@ -169,6 +169,12 @@ class PodMentorGraph(FlowGraph):
     mentor_info: dict
         The dictionary containing available time of all mentors returned by
         `.utils.load_mentor_info`.
+    min_mentor_per_pod: int
+        The minimum number of mentors assigned to a pod.
+    max_mentor_per_pod: int
+        The maximum number of mentors assigned to a pod.
+    min_pod_per_mentor: int
+        The minimum number of pods assigned to a mentor.
     max_pod_per_mentor: int
         The maximum number of pods assigned to a mentor.
     use_second: bool
@@ -178,6 +184,16 @@ class PodMentorGraph(FlowGraph):
     affinity: (pod_num, mentor_num), array_like
         The affinity matrix between pods and mentors, e.g. based on dataset
         option compatibility.
+    fixed_matches: list
+        The list of matches that must be included, in the form of
+        `(s_idx, pod_name, mentor_email)`. Lower limit for the corresponding
+        edge is set to 1.
+    mentor_requests: dict
+        The dictionary containing mentor requests returned by
+        `.utils.load_mentor_requests`.
+    now_idx: int
+        The slot index used to determine past and future, in UTC. Slots in the
+        past will not be activated.
 
     """
     def __init__(self, pod_info, mentor_info,
@@ -382,69 +398,6 @@ class PodMentorGraph(FlowGraph):
             ))
 
     @staticmethod
-    def _get_initial_flow(vertices, lower_bound, upper_bound):
-        N = len(vertices)
-        _vertices = vertices+['_source', '_sink']
-        s, t = _vertices.index('_source'), _vertices.index('_sink')
-        capacity = dok_matrix((N+2, N+2))
-
-        capacity[:N, :N] = upper_bound-lower_bound
-        # _source to main vertices
-        l_in = lower_bound.toarray().sum(axis=0)
-        us, = l_in.nonzero()
-        for u in us:
-            capacity[s, u] = l_in[u]
-        # main vertices to _sink
-        l_out = lower_bound.toarray().sum(axis=1)
-        us, = l_out.nonzero()
-        for u in us:
-            capacity[u, t] = l_out[u]
-        # sink to source
-        infinite_flow = upper_bound.toarray().sum()
-        capacity[_vertices.index('sink'), _vertices.index('source')] = infinite_flow
-
-        aux_fg = FlowGraph(_vertices, dok_matrix((N+2, N+2)), capacity, True)
-        aux_fg.FordFulkerson()
-        residual = aux_fg.residual[:N, :N]
-        s, t = vertices.index('source'), vertices.index('sink')
-        residual[s, t] = 0
-        residual[t, s] = 0
-        return residual
-
-    def get_flow(self):
-        N = len(self.vertices)
-        _vertices = self.vertices+['_source', '_sink']
-        s, t = _vertices.index('_source'), _vertices.index('_sink')
-        cost, capacity = dok_matrix((N+2, N+2)), dok_matrix((N+2, N+2))
-
-        cost[:N, :N] = self.cost
-        capacity[:N, :N] = self.upper_bound-self.lower_bound
-        # _source to main vertices
-        l_in = self.lower_bound.toarray().sum(axis=0)
-        us, = l_in.nonzero()
-        for u in us:
-            capacity[s, u] = l_in[u]
-        # main vertices to _sink
-        l_out = self.lower_bound.toarray().sum(axis=1)
-        us, = l_out.nonzero()
-        for u in us:
-            capacity[u, t] = l_out[u]
-        # sink to source
-        infinite_flow = self.upper_bound.toarray().sum()
-        capacity[_vertices.index('sink'), _vertices.index('source')] = infinite_flow
-
-        aux_fg = FlowGraph(_vertices, dok_matrix((N+2, N+2)), capacity, True)
-        aux_fg.FordFulkerson()
-        self.residual = aux_fg.residual[:N, :N]
-        s, t = self.vertices.index('source'), self.vertices.index('sink')
-        self.residual[s, t] = 0
-        self.residual[t, s] = 0
-
-        self.FordFulkerson()
-        flow = (self.capacity-self.residual).toarray()
-        return flow
-
-    @staticmethod
     def _get_day_str(d_idx, abb=False):
         if abb:
             if d_idx==2:
@@ -485,7 +438,51 @@ class PodMentorGraph(FlowGraph):
             )+slot_str
         return slot_str
 
-    def get_matches(self):
+    def update_flow(self):
+        r"""Recalculates the flow based current cost, lower/upper bounds.
+
+        To account for lower bounds on the edges, an auxiliary graph is first
+        constructed, by adding ``'_source'`` and ``'_sink'`` to the original
+        graph. Capacity from ``'_source'`` to all original vertices will be
+        the sum of lower bounds of inward edges. Capacity from all original
+        vertices to ``'_sink'`` will be the sum of upper bounds of outward
+        edges. The max flow on this auxillary flow will be used as an
+        initialization for improving on original graph.
+
+        """
+        N = len(self.vertices)
+        _vertices = self.vertices+['_source', '_sink']
+        s, t = _vertices.index('_source'), _vertices.index('_sink')
+        cost, capacity = dok_matrix((N+2, N+2)), dok_matrix((N+2, N+2))
+
+        cost[:N, :N] = self.cost
+        capacity[:N, :N] = self.upper_bound-self.lower_bound
+        # _source to main vertices
+        l_in = self.lower_bound.toarray().sum(axis=0)
+        us, = l_in.nonzero()
+        for u in us:
+            capacity[s, u] = l_in[u]
+        # main vertices to _sink
+        l_out = self.lower_bound.toarray().sum(axis=1)
+        us, = l_out.nonzero()
+        for u in us:
+            capacity[u, t] = l_out[u]
+        # sink to source
+        infinite_flow = self.upper_bound.toarray().sum()
+        capacity[_vertices.index('sink'), _vertices.index('source')] = infinite_flow
+
+        # get a feasible flow on original graph by finding the max flow on
+        # auxiliary graph
+        aux_fg = FlowGraph(_vertices, cost, capacity, True)
+        aux_fg.FordFulkerson()
+        self.residual = aux_fg.residual[:N, :N]
+        s, t = self.vertices.index('source'), self.vertices.index('sink')
+        self.residual[s, t] = 0
+        self.residual[t, s] = 0
+
+        self.FordFulkerson()
+
+    def get_matches(self, update_flow=True):
         r"""Returns pod-mentor matches.
 
         Args
@@ -501,7 +498,9 @@ class PodMentorGraph(FlowGraph):
             index (with day index encoded), pod name and mentor e-mail address.
 
         """
-        flow = self.get_flow()
+        if update_flow:
+            self.update_flow()
+        flow = (self.capacity-self.residual).toarray()
 
         matches = self.fixed_matches.copy()
         for p_idx in range(self.pod_num):
@@ -740,7 +739,7 @@ class PodMentorGraph(FlowGraph):
 
     @classmethod
     def read_schedule(cls, r_id, csv_type='mentor', now_idx=0):
-        r"""Exports mentor schedule CSV file.
+        r"""Reads matches from a schedule CSV file.
 
         Args
         ----
@@ -779,6 +778,56 @@ class PodMentorGraph(FlowGraph):
             else:
                 matches_future.append((s_idx, pod_name, mentor_email))
         return matches_past, matches_future
+
+    def export_changelog(self, c_id, matches_old, matches_new):
+        r"""Exports change log between two matches.
+
+        A change log is generated for mentors.
+
+        Args
+        ----
+        c_id: str
+            The ID for identifying change log files. Usually in the form
+            ``[old_ID]-[new_ID]``.
+        matches_old, matches_new: list
+            The old and new matches, both are the list containing
+            `(s_idx, pod_name, mentor_email)` tuples.
+
+        """
+        def entry_str(s_idx, p_idx):
+            s_idx += 2 # convert from UTC to UTC+1
+            d_idx = s_idx//SLOT_NUM
+            s_idx = s_idx%SLOT_NUM
+            return '{} {}, {}\n'.format(
+                self._get_day_str(d_idx), self._get_slot_str(s_idx),
+                self.pod_info['name'][p_idx],
+                )
+
+        m_matches_old = self.get_mentor_centered_view(matches_old)
+        m_matches_new = self.get_mentor_centered_view(matches_new)
+        with open(f'change.log_{c_id}.txt', 'w') as f:
+            f.write('Change Log\n')
+            for mentor_email in self.mentor_info['email']:
+                set_old = set(m_matches_old[mentor_email]) if mentor_email in m_matches_old else set()
+                set_new = set(m_matches_new[mentor_email]) if mentor_email in m_matches_new else set()
+
+                if set_new!=set_old:
+                    m_idx = self.mentor_info['email'].index(mentor_email)
+                    f.write('\n{} {}, {}, #pod {} --> {}\n'.format(
+                        self.mentor_info['first_name'][m_idx],
+                        self.mentor_info['last_name'][m_idx],
+                        mentor_email, len(set_old), len(set_new)
+                        ))
+                    to_remove = set_old.difference(set_new)
+                    to_add = set_new.difference(set_old)
+                    if to_remove:
+                        f.write('remove\n')
+                        for s_idx, p_idx in to_remove:
+                            f.write(entry_str(s_idx, p_idx))
+                    if to_add:
+                        f.write('add\n')
+                        for s_idx, p_idx in to_add:
+                            f.write(entry_str(s_idx, p_idx))
 
     def mark_matches(self, matches, cost_change=100):
         r"""Loads existing matches to the flow graph.
