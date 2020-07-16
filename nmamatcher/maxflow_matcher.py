@@ -157,9 +157,9 @@ class PodMentorGraph(FlowGraph):
     initialization. The assigned slot will occur in the third or forth gap
     between core sessions for all tracks.
 
-    Vertices for 'pod', 'pod-slot', 'mentor-slot' and 'mentor' are created,
-    with cost and capacity specified for each edge. The minimum cost maximum
-    flow will be the matching result.
+    Vertices for 'pod', 'mentor-slot' and 'mentor' are created, with cost and
+    capacity specified for each edge. The minimum cost maximum flow will be the
+    matching result.
 
     Args
     ----
@@ -329,8 +329,6 @@ class PodMentorGraph(FlowGraph):
         vertices = ['source', 'sink']
         for p_idx in range(pod_num):
             vertices.append(('pod', p_idx))
-            for s_idx in pod_slots[p_idx]:
-                vertices.append(('pod-slot', p_idx, s_idx))
         for m_idx in range(mentor_num):
             for s_idx in mentor_slots[m_idx]:
                 vertices.append(('mentor-slot', m_idx, s_idx))
@@ -346,19 +344,13 @@ class PodMentorGraph(FlowGraph):
             v = vertices.index(('pod', p_idx))
             lower_bound[u, v] = min_mentor_per_pod
             upper_bound[u, v] = max_mentor_per_pod
-        # pod --> pod_slot
-        for p_idx in range(pod_num):
-            u = vertices.index(('pod', p_idx))
-            for s_idx in pod_slots[p_idx]:
-                v = vertices.index(('pod-slot', p_idx, s_idx))
-                upper_bound[u, v] = max_mentor_per_pod
-        # pod-slot --> mentor-slot
+        # pod --> mentor-slot
         self.shared_slots = np.zeros((pod_num, mentor_num), np.object)
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
                 self.shared_slots[p_idx, m_idx] = []
                 for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
-                    u = vertices.index(('pod-slot', p_idx, s_idx))
+                    u = vertices.index(('pod', p_idx))
                     v = vertices.index(('mentor-slot', m_idx, s_idx))
                     cost[u, v] = int(100*(2-affinity[p_idx, m_idx])) # use int to avoid numerical negative cycle
                     cost[v, u] = -cost[u, v]
@@ -386,7 +378,7 @@ class PodMentorGraph(FlowGraph):
                 continue
             p_idx = pod_info['name'].index(pod_name)
             m_idx = mentor_info['email'].index(mentor_email)
-            u = vertices.index(('pod-slot', p_idx, s_idx))
+            u = vertices.index(('pod', p_idx))
             v = vertices.index(('mentor-slot', m_idx, s_idx))
             lower_bound[u, v] = 1
 
@@ -861,7 +853,7 @@ class PodMentorGraph(FlowGraph):
                 print(f'{mentor_email} not found in mentor e-mail addresses')
                 continue
 
-            u = self.vertices.index(('pod-slot', p_idx, s_idx))
+            u = self.vertices.index(('pod', p_idx))
             v = self.vertices.index(('mentor-slot', m_idx, s_idx))
             self.cost[u, v] -= cost_change
             self.cost[v, u] = -self.cost[u, v]
