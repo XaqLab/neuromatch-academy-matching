@@ -800,29 +800,34 @@ class PodMentorGraph(FlowGraph):
         m_matches_old = self.get_mentor_centered_view(matches_old)
         print('[new]:')
         m_matches_new = self.get_mentor_centered_view(matches_new)
-        with open(f'change.log_{c_id}.txt', 'w') as f:
-            f.write('Change Log\n')
-            for mentor_email in self.mentor_info['email']:
-                set_old = set(m_matches_old[mentor_email]) if mentor_email in m_matches_old else set()
-                set_new = set(m_matches_new[mentor_email]) if mentor_email in m_matches_new else set()
 
-                if set_new!=set_old:
-                    m_idx = self.mentor_info['email'].index(mentor_email)
-                    f.write('\n{} {}, {}, #pod {} --> {}\n'.format(
-                        self.mentor_info['first_name'][m_idx],
-                        self.mentor_info['last_name'][m_idx],
-                        mentor_email, len(set_old), len(set_new)
-                        ))
-                    to_remove = set_old.difference(set_new)
-                    to_add = set_new.difference(set_old)
-                    if to_remove:
-                        f.write('remove\n')
-                        for s_idx, p_idx in to_remove:
-                            f.write(entry_str(s_idx, p_idx))
-                    if to_add:
-                        f.write('add\n')
-                        for s_idx, p_idx in to_add:
-                            f.write(entry_str(s_idx, p_idx))
+        count, out_strs = 0, []
+        for mentor_email in sorted(self.mentor_info['email']):
+            set_old = set(m_matches_old[mentor_email]) if mentor_email in m_matches_old else set()
+            set_new = set(m_matches_new[mentor_email]) if mentor_email in m_matches_new else set()
+
+            if set_new!=set_old:
+                count += 1
+                m_idx = self.mentor_info['email'].index(mentor_email)
+                out_strs.append('\n{} {}, {}, #pod {} --> {}\n'.format(
+                    self.mentor_info['first_name'][m_idx],
+                    self.mentor_info['last_name'][m_idx],
+                    mentor_email, len(set_old), len(set_new)
+                    ))
+                to_remove = set_old.difference(set_new)
+                to_add = set_new.difference(set_old)
+                if to_remove:
+                    out_strs.append('remove\n')
+                    for s_idx, p_idx in to_remove:
+                        out_strs.append(entry_str(s_idx, p_idx))
+                if to_add:
+                    out_strs.append('add\n')
+                    for s_idx, p_idx in to_add:
+                        out_strs.append(entry_str(s_idx, p_idx))
+        out_strs = ['Change Log\n', '{} mentors affected\n'.format(count)]+out_strs
+        with open(f'change.log_{c_id}.txt', 'w') as f:
+            for out_str in out_strs:
+                f.write(out_str)
 
     def mark_matches(self, matches, cost_change=100):
         r"""Loads existing matches to the flow graph.
