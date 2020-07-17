@@ -63,15 +63,28 @@ if __name__=='__main__':
     #                      matches)
 
     group_info = create_fake_group(pod_info, max_group_size=5)
+
+
+    # get a match without extra slots
     pmg = PodMentorGraph(group_info, mentor_info, stage=2,
                          min_mentor_per_pod=0, max_mentor_per_pod=1,
                          min_pod_per_mentor=0, max_pod_per_mentor=3,
                          mentor_requests=mentor_requests)
-
     tic = time.time()
     matches = pmg.get_matches()
     toc = time.time()
     print('{:d} min {:.1f} secs elapsed'.format(int((toc-tic)//60), (toc-tic)%60))
+
+    # get a match with 1 extra slots
+    pmg = PodMentorGraph(group_info, mentor_info, stage=2,
+                         min_mentor_per_pod=0, max_mentor_per_pod=1,
+                         min_pod_per_mentor=0, max_pod_per_mentor=3,
+                         mentor_requests=mentor_requests, extra_slot=1)
+    pmg.mark_matches(matches) # mark matches from above, optional
+    tic = time.time()
+    matches = pmg.get_matches()
+    toc = time.time()
+
     r_id = random_id()
     print(f'\n{r_id}')
     pmg.export_pod_schedule(r_id, matches)

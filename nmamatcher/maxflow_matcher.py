@@ -200,13 +200,17 @@ class PodMentorGraph(FlowGraph):
     allow_b2b: bool
         Whether to allow back to back 30 min slots. If ``False``, only slots
         starting at integer hours.
+    extra_slot: int
+        The number of extra slots enabled around mentor's availability.
+        Exponentially lower weights are assigned to these slots.
 
     """
     def __init__(self, pod_info, mentor_info,
                  min_mentor_per_pod=0, max_mentor_per_pod=1,
                  min_pod_per_mentor=0, max_pod_per_mentor=2,
                  use_second=False, affinity=None, fixed_matches=None,
-                 mentor_requests=None, now_idx=0, stage=1, allow_b2b=False):
+                 mentor_requests=None, now_idx=0, stage=1, allow_b2b=False,
+                 extra_slot=0):
         self.pod_info, self.mentor_info = pod_info, mentor_info
         pod_num, mentor_num = pod_info['pod_num'], mentor_info['mentor_num']
         self.pod_num, self.mentor_num = pod_num, mentor_num
@@ -234,18 +238,19 @@ class PodMentorGraph(FlowGraph):
             m_idx = self.mentor_info['email'].index(mentor_requests['email'][r_idx])
             if mentor_requests['type'][r_idx]=='deactivate':
                 to_deact.append(m_idx)
-            else:
-                s_idx = int(mentor_requests['d_idx'][r_idx]*SLOT_NUM+mentor_requests['s_idx'][r_idx])
-                if mentor_requests['type'][r_idx]=='add':
-                    if m_idx in to_add:
-                        to_add[m_idx].append(s_idx)
-                    else:
-                        to_add[m_idx] = [s_idx]
-                if mentor_requests['type'][r_idx]=='remove':
-                    if m_idx in to_remove:
-                        to_remove[m_idx].append(s_idx)
-                    else:
-                        to_remove[m_idx] = [s_idx]
+            else: # add and remove for stage 1 only
+                if stage==1:
+                    s_idx = int(mentor_requests['d_idx'][r_idx]*SLOT_NUM+mentor_requests['s_idx'][r_idx])
+                    if mentor_requests['type'][r_idx]=='add':
+                        if m_idx in to_add:
+                            to_add[m_idx].append(s_idx)
+                        else:
+                            to_add[m_idx] = [s_idx]
+                    if mentor_requests['type'][r_idx]=='remove':
+                        if m_idx in to_remove:
+                            to_remove[m_idx].append(s_idx)
+                        else:
+                            to_remove[m_idx] = [s_idx]
 
         # prepare available slots for pods
         pod_slots = []
@@ -273,57 +278,54 @@ class PodMentorGraph(FlowGraph):
                 slots = GROUP_SLOTS[tz_group]%SLOT_NUM
             pod_slots.append(slots)
 
-        # prepare available slots for mentors, along with choice flexibility
-        mentor_slots, mentor_flexes = [], []
+        # prepare available slots for mentors
+        #
+        # a dictionary with s_idx as key and flexibility as value is prepared
+        # for each mentor
+        mentor_slots = []
         for m_idx in range(mentor_num):
-            slots, flexes = [], []
+            slots = {}
             if m_idx not in to_deact:
                 if stage==1:
                     d_idxs = np.intersect1d(mentor_info['primary_days'][m_idx], range(2, 5)) # only day 3-5 has potential match
                     # add first choices
                     for d_idx in d_idxs:
                         for s_idx in mentor_info['primary_slots'][m_idx]:
-                            slots.append(d_idx*SLOT_NUM+s_idx)
-                            flexes.append(1.)
+                            slots[d_idx*SLOT_NUM+s_idx] = 1.
                     # add second choices
                     if use_second:
                         d_idxs = np.intersect1d(mentor_info['secondary_days'][m_idx], range(2, 5))
                         for d_idx in d_idxs:
                             for s_idx in mentor_info['secondary_slots'][m_idx]:
                                 if d_idx*SLOT_NUM+s_idx not in slots: # first choice overwrites second choice
-                                    slots.append(d_idx*SLOT_NUM+s_idx)
-                                    flexes.append(mentor_info['flexibility'][m_idx])
+                                    slots[d_idx*SLOT_NUM+s_idx] = mentor_info['flexibility'][m_idx]
                     # deal with requests
                     if m_idx in to_add:
                         for s in to_add[m_idx]:
                             if s not in slots:
-                                slots.append(s)
-                                flexes.append(1.)
+                                slots[s] = 1.
                     if m_idx in to_remove:
-                        sf_pairs = [(s, f) for s, f in zip(slots, flexes) if s in to_remove[m_idx]]
-                        if sf_pairs:
-                            slots, flexes = map(list, zip(*sf_pairs))
-                        else:
-                            slots, flexes = [], []
-                    sf_pairs = [(s, f) for s, f in zip(slots, flexes) if s>=now_idx]
-                    if sf_pairs:
-                        slots, flexes = map(list, zip(*sf_pairs))
-                    else:
-                        slots, flexes = [], []
+                        for s in to_remove[m_idx]:
+                            if s in slots:
+                                slots.pop(s)
+                    slots = dict((s, f) for s, f in slots.items() if s>=now_idx)
                 if stage==2:
                     for s_idx in mentor_info['primary_slots'][m_idx]:
-                        if allow_b2b:
-                            slots.append(s_idx)
-                            flexes.append(1.)
-                        elif s_idx%2==0:
-                            slots.append(s_idx)
-                            flexes.append(1.)
+                        if allow_b2b or s_idx%2==0:
+                            slots[s_idx] = 1.
                     for s_idx in mentor_info['secondary_slots'][m_idx]:
                         if (s_idx not in slots) and (allow_b2b or s_idx%2==0):
-                            slots.append(s_idx)
-                            flexes.append(mentor_info['flexibility'][m_idx])
+                            slots[s_idx] = mentor_info['flexibility'][m_idx]
+                    # extra slots, with exponentially decaying flexibility
+                    for e in range(1, extra_slot+1):
+                        for s_idx in mentor_info['primary_slots'][m_idx]:
+                            _s_idx = (s_idx+e)%SLOT_NUM # one slot after
+                            if (_s_idx not in slots) and (allow_b2b or _s_idx%2==0):
+                                slots[_s_idx] = 0.5**e
+                            _s_idx = (s_idx-e)%SLOT_NUM # one slot before
+                            if (_s_idx not in slots) and (allow_b2b or _s_idx%2==0):
+                                slots[_s_idx] = 0.5**e
             mentor_slots.append(slots)
-            mentor_flexes.append(flexes)
 
         # update pod_slots, mentor_slots from fixed match
         for s_idx, pod_name, mentor_email in fixed_matches:
@@ -345,8 +347,7 @@ class PodMentorGraph(FlowGraph):
             if s_idx not in pod_slots[p_idx]:
                 pod_slots[p_idx].append(s_idx)
             if s_idx not in mentor_slots[m_idx]:
-                mentor_slots[m_idx].append(s_idx)
-                mentor_flexes[m_idx].append(1.)
+                mentor_slots[m_idx] = 1.
 
         # define vertices in the graph
         vertices = ['source', 'sink']
@@ -372,7 +373,7 @@ class PodMentorGraph(FlowGraph):
         for p_idx in range(pod_num):
             for m_idx in range(mentor_num):
                 self.shared_slots[p_idx, m_idx] = []
-                for s_idx in np.intersect1d(pod_slots[p_idx], mentor_slots[m_idx]):
+                for s_idx in np.intersect1d(pod_slots[p_idx], list(mentor_slots[m_idx].keys())):
                     u = vertices.index(('pod', p_idx))
                     v = vertices.index(('mentor-slot', m_idx, s_idx))
                     cost[u, v] = int(100*(2-affinity[p_idx, m_idx])) # use int to avoid numerical negative cycle
@@ -383,7 +384,7 @@ class PodMentorGraph(FlowGraph):
         # mentor-slot --> mentor
         for m_idx in range(mentor_num):
             v = vertices.index(('mentor', m_idx))
-            for s_idx, flex in zip(mentor_slots[m_idx], mentor_flexes[m_idx]):
+            for s_idx, flex in mentor_slots[m_idx].items():
                 u = vertices.index(('mentor-slot', m_idx, s_idx))
                 cost[u, v] = int(10*(1-flex))
                 cost[v, u] = -cost[u, v]
