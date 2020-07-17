@@ -62,10 +62,10 @@ if __name__=='__main__':
     # pmg.export_changelog(old_id+'-'+r_id, old_matches_past+old_matches_future,
     #                      matches)
 
-    group_info = create_fake_group(pod_info, max_group_size=6)
+    group_info = create_fake_group(pod_info, max_group_size=5)
     pmg = PodMentorGraph(group_info, mentor_info, stage=2,
-                         min_mentor_per_pod=2, max_mentor_per_pod=3,
-                         min_pod_per_mentor=0, max_pod_per_mentor=6,
+                         min_mentor_per_pod=0, max_mentor_per_pod=1,
+                         min_pod_per_mentor=0, max_pod_per_mentor=3,
                          mentor_requests=mentor_requests)
 
     tic = time.time()
@@ -75,4 +75,4 @@ if __name__=='__main__':
     r_id = random_id()
     print(f'\n{r_id}')
     pmg.export_pod_schedule(r_id, matches)
-    pmg.export_mentor_schedule(r_id, matches, print_idle=False)
+    pmg.export_mentor_schedule(r_id, matches)
