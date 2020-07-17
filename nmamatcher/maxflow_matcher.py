@@ -530,7 +530,7 @@ class PodMentorGraph(FlowGraph):
                             matches.append(
                                 (s_idx, self.pod_info['name'][p_idx], self.mentor_info['email'][m_idx])
                                 )
-                        if self.stage==1:
+                        if self.stage==2:
                             matches.append(
                                 (s_idx%SLOT_NUM, self.pod_info['name'][p_idx], self.mentor_info['email'][m_idx])
                                 )
@@ -571,7 +571,7 @@ class PodMentorGraph(FlowGraph):
                 p_matches[pod_name] = []
             p_matches[pod_name].append((s_idx, m_idx))
 
-        print('{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
+        print('\n{}/{} pods assigned with a mentor'.format((matched>0).sum(), self.pod_num))
         print('{:.2f} mentors assigned to each pod on average'.format(matched.mean()))
         if print_hanging and np.any(matched==0):
             print('hanging pods:')
@@ -580,7 +580,7 @@ class PodMentorGraph(FlowGraph):
                 if matched[p_idx]==0:
                     print(self.pod_info['name'][p_idx])
                     tz_groups.append(self.pod_info['tz_group'][p_idx])
-            print('counts of time zones of unassigned pods: {}'.format(dict(Counter(tz_groups))))
+            print('\ncounts of time zones of unassigned pods: {}'.format(dict(Counter(tz_groups))))
         return p_matches
 
     def get_mentor_centered_view(self, matches, print_idle=False):
@@ -623,7 +623,7 @@ class PodMentorGraph(FlowGraph):
                 m_matches[mentor_email] = []
             m_matches[mentor_email].append((s_idx, p_idx))
 
-        print('{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
+        print('\n{}/{} mentors assigned to at least a pod'.format((usage>0).sum(), self.mentor_num))
         print('{:.2%} usage for the assigned mentors'.format((usage/(limit+1e-8))[usage>0].mean()))
         if print_idle and np.any(np.logical_and(usage==0, limit>0)):
             print('idle mentors:')
