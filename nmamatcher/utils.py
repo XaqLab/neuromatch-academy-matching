@@ -112,6 +112,7 @@ def create_fake_group(pod_info, max_group_size=5):
     group_info['pod_num'] = len(group_info['name']) # use pod keys
     return group_info
 
+
 def load_mentor_info(mentor_xlsx):
     r"""Loads mentor information.
 
